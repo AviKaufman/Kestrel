@@ -66,6 +66,27 @@ test_ship_modes_generate_clean_briefs() {
   pass "fm-brief.sh: no-mistakes/direct-PR/local-only briefs generate cleanly"
 }
 
+test_ship_and_scout_briefs_require_visual_guard() {
+  local home ship scout
+  home="$TMP_ROOT/visual-guard-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" visual-ship sample-proj >/dev/null 2>&1
+  ship="$home/data/visual-ship/brief.md"
+  assert_grep 'Use `'"$ROOT"'/bin/fm-visual-guard.sh` for every GUI, browser, app-launcher, and screenshot action.' "$ship" \
+    "ship brief did not require the Firstmate visual guard"
+  assert_grep "legacy Codex visual wrappers" "$ship" \
+    "ship brief did not steer away from legacy visual wrappers"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" visual-scout sample-proj --scout >/dev/null 2>&1
+  scout="$home/data/visual-scout/brief.md"
+  assert_grep 'Use `'"$ROOT"'/bin/fm-visual-guard.sh` for every GUI, browser, app-launcher, and screenshot action.' "$scout" \
+    "scout brief did not require the Firstmate visual guard"
+  assert_grep "legacy Codex visual wrappers" "$scout" \
+    "scout brief did not steer away from legacy visual wrappers"
+  pass "fm-brief.sh: ship and scout briefs require the Firstmate visual guard"
+}
+
 test_faster_paths_use_configured_authority_without_stacked_review() {
   local home id brief
   home="$TMP_ROOT/configured-authority-home"
@@ -311,6 +332,7 @@ test_scout_and_secondmate_load_decision_hold_policy() {
 test_script_parses
 test_help_includes_entire_header
 test_ship_modes_generate_clean_briefs
+test_ship_and_scout_briefs_require_visual_guard
 test_faster_paths_use_configured_authority_without_stacked_review
 test_no_mistakes_dod_wording
 test_ship_project_memory_wording
