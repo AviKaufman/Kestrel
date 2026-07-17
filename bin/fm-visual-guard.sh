@@ -28,6 +28,8 @@ ALLOW_USER_WORKSPACE=${FM_VISUAL_ALLOW_USER_WORKSPACE:-0}
 LEGACY_VISUAL_CLASSES=${FM_VISUAL_LEGACY_CLASSES:-CodexVisual}
 VERIFY_ATTEMPTS=${FM_VISUAL_VERIFY_ATTEMPTS:-10}
 VERIFY_SLEEP=${FM_VISUAL_VERIFY_SLEEP:-0.2}
+VERIFY_SETTLE_POLLS=${FM_VISUAL_VERIFY_SETTLE_POLLS:-3}
+RECORD_SEPARATOR=$'\x1f'
 
 usage() {
   cat <<EOF
@@ -256,17 +258,6 @@ cmdline_matches_visual_profile() {
   return 1
 }
 
-workspace_is_visible_user_workspace() {
-  local id=${1:-} name=${2:-}
-  case "$id" in
-    [1-9]|1[01]) return 0 ;;
-  esac
-  case "$name" in
-    [1-9]|1[01]) return 0 ;;
-  esac
-  return 1
-}
-
 client_rows() {
   local clients monitors
   clients=$(hyprland_json clients)
@@ -287,36 +278,26 @@ client_rows() {
         $monitor_name
       ]
     | @tsv
+    | gsub("\t"; "\u001f")
   '
-}
-
-visible_visual_clients() {
-  local address pid class initial title workspace_id workspace_name monitor cmdline
-  client_rows | while IFS=$'\t' read -r address pid class initial title workspace_id workspace_name monitor; do
-    [ -n "$address" ] || continue
-    workspace_is_visible_user_workspace "$workspace_id" "$workspace_name" || continue
-    cmdline=$(client_cmdline "$pid")
-    if class_matches_visual_identity "$class" "$initial" || cmdline_matches_visual_profile "$cmdline"; then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$address" "${class:-$initial}" "$title" "$workspace_name" "$monitor" "$pid"
-    fi
-  done
 }
 
 visual_client_rows() {
   local address pid class initial title workspace_id workspace_name monitor cmdline
-  client_rows | while IFS=$'\t' read -r address pid class initial title workspace_id workspace_name monitor; do
+  client_rows | while IFS="$RECORD_SEPARATOR" read -r address pid class initial title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
     cmdline=$(client_cmdline "$pid")
     if class_matches_visual_identity "$class" "$initial" || cmdline_matches_visual_profile "$cmdline"; then
-      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$address" "$pid" "${class:-$initial}" "$title" "$workspace_id" "$workspace_name" "$monitor"
+      printf '%s%s%s%s%s%s%s%s%s%s%s%s%s\n' \
+        "$address" "$RECORD_SEPARATOR" "$pid" "$RECORD_SEPARATOR" "${class:-$initial}" "$RECORD_SEPARATOR" \
+        "$title" "$RECORD_SEPARATOR" "$workspace_id" "$RECORD_SEPARATOR" "$workspace_name" "$RECORD_SEPARATOR" "$monitor"
     fi
   done
 }
 
 visual_client_addresses() {
   local address pid class title workspace_id workspace_name monitor
-  visual_client_rows | while IFS=$'\t' read -r address pid class title workspace_id workspace_name monitor; do
+  visual_client_rows | while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
     printf '%s\n' "$address"
   done
@@ -343,7 +324,7 @@ visual_client_status() {
   local address pid class title workspace_id workspace_name monitor rows
   rows=$(visual_client_rows)
   if [ -n "$rows" ]; then
-    while IFS=$'\t' read -r address pid class title workspace_id workspace_name monitor; do
+    while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
       [ -n "$address" ] || continue
       if ! client_address_in_set "$address" "$preexisting"; then
         new_count=$((new_count + 1))
@@ -355,44 +336,47 @@ visual_client_status() {
 $rows
 EOF
   fi
-  printf '%s\t%s\n' "$misplaced" "$new_count"
+  printf '%s%s%s\n' "$misplaced" "$RECORD_SEPARATOR" "$new_count"
 }
 
-remediate_visible_visual_clients() {
-  local leaked address class title workspace monitor pid moved=0
-  leaked=$(visible_visual_clients)
-  [ -n "$leaked" ] || return 0
-
-  while IFS=$'\t' read -r address class title workspace monitor pid; do
+remediate_misplaced_visual_clients() {
+  local rows address pid class title workspace_id workspace_name monitor moved=0
+  rows=$(visual_client_rows)
+  while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
+    visual_client_is_hidden "$workspace_id" "$workspace_name" "$monitor" && continue
     if ! hyprctl_call dispatch movetoworkspacesilent "$VISUAL_WORKSPACE,address:$address" >/dev/null 2>&1; then
-      die "failed to move Codex visual client $address from workspace '$workspace' to '$VISUAL_WORKSPACE'"
+      die "failed to move Codex visual client $address from workspace '${workspace_name:-$workspace_id}' to '$VISUAL_WORKSPACE'"
     fi
     moved=$((moved + 1))
-    warn "moved Codex visual client $address pid=$pid class=$class from workspace '$workspace' on $monitor to '$VISUAL_WORKSPACE'"
+    warn "moved Codex visual client $address pid=$pid class=$class from workspace '${workspace_name:-$workspace_id}' on $monitor to '$VISUAL_WORKSPACE'"
   done <<EOF
-$leaked
+$rows
 EOF
+  printf '%s\n' "$moved"
 }
 
 verify_visual_placement() {
-  local preexisting=${1:-} leaked remaining=$VERIFY_ATTEMPTS status misplaced new_count
+  local preexisting=${1:-} remaining=$VERIFY_ATTEMPTS status misplaced new_count remediated stable_polls=0
   while [ "$remaining" -gt 0 ]; do
-    remediate_visible_visual_clients
+    remediated=$(remediate_misplaced_visual_clients)
     status=$(visual_client_status "$preexisting")
-    IFS=$'\t' read -r misplaced new_count <<EOF
+    IFS="$RECORD_SEPARATOR" read -r misplaced new_count <<EOF
 $status
 EOF
-    if [ "$new_count" -gt 0 ] && [ "$misplaced" -eq 0 ]; then
-      return 0
+    if [ "$new_count" -gt 0 ] && [ "$misplaced" -eq 0 ] && [ "$remediated" -eq 0 ]; then
+      stable_polls=$((stable_polls + 1))
+      if [ "$stable_polls" -ge "$VERIFY_SETTLE_POLLS" ]; then
+        return 0
+      fi
+    else
+      stable_polls=0
     fi
     sleep "$VERIFY_SLEEP"
     remaining=$((remaining - 1))
   done
-  leaked=$(visible_visual_clients)
-  [ -z "$leaked" ] || die "Codex visual client remains on a visible workspace after remediation: $leaked"
   status=$(visual_client_status "$preexisting")
-  IFS=$'\t' read -r misplaced new_count <<EOF
+  IFS="$RECORD_SEPARATOR" read -r misplaced new_count <<EOF
 $status
 EOF
   [ "${misplaced:-0}" -eq 0 ] || die "Codex visual client remains outside workspace $VISUAL_WORKSPACE on $VISUAL_OUTPUT"
@@ -468,7 +452,7 @@ guard_screenshot() {
 guard_clients() {
   local rows address pid class initial title workspace_id workspace_name monitor cmdline
   require_hyprland
-  rows=$(client_rows | while IFS=$'\t' read -r address pid class initial title workspace_id workspace_name monitor; do
+  rows=$(client_rows | while IFS="$RECORD_SEPARATOR" read -r address pid class initial title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
     cmdline=$(client_cmdline "$pid")
     if [ "$monitor" = "$VISUAL_OUTPUT" ] \
