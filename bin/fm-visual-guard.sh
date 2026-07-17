@@ -268,19 +268,23 @@ workspace_is_visible_user_workspace() {
 }
 
 client_rows() {
-  local clients
+  local clients monitors
   clients=$(hyprland_json clients)
-  printf '%s\n' "$clients" | jq_call -r '
-    .[]
+  monitors=$(hyprland_json monitors)
+  # shellcheck disable=SC2016
+  printf '%s\n' "$clients" | jq_call -r --argjson monitors "$monitors" '
+    .[] as $client
+    | (($client.monitor // "") | tostring) as $monitor
+    | (($monitors | map(select(((.id? // "") | tostring) == $monitor) | .name) | first) // $monitor) as $monitor_name
     | [
-        (.address // ""),
-        ((.pid? // "") | tostring),
-        (.class // ""),
-        (.initialClass // ""),
-        (.title // ""),
-        ((.workspace.id? // "") | tostring),
-        (.workspace.name // ""),
-        (.monitor // "")
+        ($client.address // ""),
+        (($client.pid? // "") | tostring),
+        ($client.class // ""),
+        ($client.initialClass // ""),
+        ($client.title // ""),
+        (($client.workspace.id? // "") | tostring),
+        ($client.workspace.name // ""),
+        $monitor_name
       ]
     | @tsv
   '
@@ -310,6 +314,24 @@ visual_client_rows() {
   done
 }
 
+visual_client_addresses() {
+  local address pid class title workspace_id workspace_name monitor
+  visual_client_rows | while IFS=$'\t' read -r address pid class title workspace_id workspace_name monitor; do
+    [ -n "$address" ] || continue
+    printf '%s\n' "$address"
+  done
+}
+
+client_address_in_set() {
+  local needle=$1 addresses=$2 address
+  while IFS= read -r address; do
+    [ "$address" = "$needle" ] && return 0
+  done <<EOF
+$addresses
+EOF
+  return 1
+}
+
 visual_client_is_hidden() {
   local workspace_id=$1 workspace_name=$2 monitor=$3
   { [ "$workspace_id" = "$VISUAL_WORKSPACE" ] || [ "$workspace_name" = "$VISUAL_WORKSPACE" ]; } \
@@ -317,12 +339,15 @@ visual_client_is_hidden() {
 }
 
 visual_client_status() {
-  local count=0 misplaced=0 address pid class title workspace_id workspace_name monitor rows
+  local preexisting=${1:-} misplaced=0 new_count=0
+  local address pid class title workspace_id workspace_name monitor rows
   rows=$(visual_client_rows)
   if [ -n "$rows" ]; then
     while IFS=$'\t' read -r address pid class title workspace_id workspace_name monitor; do
       [ -n "$address" ] || continue
-      count=$((count + 1))
+      if ! client_address_in_set "$address" "$preexisting"; then
+        new_count=$((new_count + 1))
+      fi
       if ! visual_client_is_hidden "$workspace_id" "$workspace_name" "$monitor"; then
         misplaced=$((misplaced + 1))
       fi
@@ -330,7 +355,7 @@ visual_client_status() {
 $rows
 EOF
   fi
-  printf '%s\t%s\n' "$count" "$misplaced"
+  printf '%s\t%s\n' "$misplaced" "$new_count"
 }
 
 remediate_visible_visual_clients() {
@@ -351,14 +376,14 @@ EOF
 }
 
 verify_visual_placement() {
-  local leaked remaining=$VERIFY_ATTEMPTS status count misplaced
+  local preexisting=${1:-} leaked remaining=$VERIFY_ATTEMPTS status misplaced new_count
   while [ "$remaining" -gt 0 ]; do
     remediate_visible_visual_clients
-    status=$(visual_client_status)
-    IFS=$'\t' read -r count misplaced <<EOF
+    status=$(visual_client_status "$preexisting")
+    IFS=$'\t' read -r misplaced new_count <<EOF
 $status
 EOF
-    if [ "$count" -gt 0 ] && [ "$misplaced" -eq 0 ]; then
+    if [ "$new_count" -gt 0 ] && [ "$misplaced" -eq 0 ]; then
       return 0
     fi
     sleep "$VERIFY_SLEEP"
@@ -366,26 +391,27 @@ EOF
   done
   leaked=$(visible_visual_clients)
   [ -z "$leaked" ] || die "Codex visual client remains on a visible workspace after remediation: $leaked"
-  status=$(visual_client_status)
-  IFS=$'\t' read -r count misplaced <<EOF
+  status=$(visual_client_status "$preexisting")
+  IFS=$'\t' read -r misplaced new_count <<EOF
 $status
 EOF
   [ "${misplaced:-0}" -eq 0 ] || die "Codex visual client remains outside workspace $VISUAL_WORKSPACE on $VISUAL_OUTPUT"
 }
 
 guard_exec() {
-  local command_string dispatch_string env_assignments
+  local command_string dispatch_string env_assignments preexisting
   [ "${1:-}" = "--" ] && shift
   [ "$#" -gt 0 ] || die "exec requires a command after --"
 
   ensure_visual_target 1
+  preexisting=$(visual_client_addresses)
   command_string=$(join_shell_words "$@")
   env_assignments=$(guard_env_assignments)
   dispatch_string="[workspace $VISUAL_WORKSPACE silent] env $env_assignments $command_string"
   if ! hyprctl_call dispatch exec "$dispatch_string" >/dev/null 2>&1; then
     die "Hyprland failed to dispatch command to workspace '$VISUAL_WORKSPACE'"
   fi
-  verify_visual_placement
+  verify_visual_placement "$preexisting"
   printf 'launched on workspace %s: %s\n' "$VISUAL_WORKSPACE" "$command_string"
 }
 
