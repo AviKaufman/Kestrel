@@ -12,6 +12,7 @@ MONITOR_STATE="$TMP_ROOT/monitor-created"
 LEAK_STATE="$TMP_ROOT/leak-client"
 CLIENT_COUNT_STATE="$TMP_ROOT/client-count"
 DISPATCH_STATE="$TMP_ROOT/dispatched"
+REAL_JQ=$(command -v jq)
 
 write_fake_tools() {
   cat > "$FAKEBIN/hyprctl" <<'SH'
@@ -37,6 +38,12 @@ if [ "${1:-}" = "clients" ] && [ "${2:-}" = "-j" ]; then
   [ -f "${FM_VISUAL_TEST_CLIENT_COUNT_STATE:-}" ] && count=$(cat "$FM_VISUAL_TEST_CLIENT_COUNT_STATE")
   count=$((count + 1))
   printf '%s\n' "$count" > "$FM_VISUAL_TEST_CLIENT_COUNT_STATE"
+
+  if [ "${FM_VISUAL_TEST_CLIENT_MODE:-}" = "query-failure" ] \
+    && [ -e "${FM_VISUAL_TEST_DISPATCH_STATE:-}" ]; then
+    printf 'client query failed\n' >&2
+    exit 1
+  fi
 
   if [ "${FM_VISUAL_TEST_CLIENT_MODE:-}" = "empty-fields" ]; then
     cat <<'JSON'
@@ -241,6 +248,18 @@ exit 0
 SH
   chmod +x "$FAKEBIN/hyprctl"
 
+  cat > "$FAKEBIN/jq" <<'SH'
+#!/usr/bin/env bash
+set -u
+if [ "${FM_VISUAL_TEST_JQ_FAIL_AFTER_DISPATCH:-0}" = 1 ] \
+  && [ -e "${FM_VISUAL_TEST_DISPATCH_STATE:-}" ]; then
+  printf 'jq parse failed\n' >&2
+  exit 1
+fi
+exec "$FM_VISUAL_TEST_REAL_JQ" "$@"
+SH
+  chmod +x "$FAKEBIN/jq"
+
   cat > "$FAKEBIN/grim" <<'SH'
 #!/usr/bin/env bash
 set -u
@@ -266,6 +285,7 @@ run_guard() {
     FM_VISUAL_TEST_LEAK_STATE="$LEAK_STATE" \
     FM_VISUAL_TEST_CLIENT_COUNT_STATE="$CLIENT_COUNT_STATE" \
     FM_VISUAL_TEST_DISPATCH_STATE="$DISPATCH_STATE" \
+    FM_VISUAL_TEST_REAL_JQ="$REAL_JQ" \
     FM_VISUAL_HYPRCTL=hyprctl \
     FM_VISUAL_GRIM=grim \
     FM_VISUAL_VERIFY_SLEEP=0 \
@@ -468,6 +488,36 @@ test_exec_accepts_numeric_monitor_id_for_headless_output() {
   pass "fm-visual-guard.sh: numeric monitor ids resolve to CODEX-HEADLESS"
 }
 
+test_exec_fails_closed_when_client_query_fails() {
+  local output code
+  write_fake_tools
+  rm -f "$LOG" "$MONITOR_STATE" "$CLIENT_COUNT_STATE" "$DISPATCH_STATE"
+  output=$(FM_VISUAL_TEST_CLIENT_MODE=query-failure \
+    run_guard exec -- xdg-open "https://example.test" 2>&1)
+  code=$?
+  [ "$code" -ne 0 ] || fail "verification succeeded after the client query failed"
+  assert_contains "$output" "hyprctl clients -j failed" \
+    "verification did not propagate the failed client query"
+  assert_not_contains "$output" "launched on workspace 99" \
+    "verification reported launch success after the client query failed"
+  pass "fm-visual-guard.sh: client query failures fail placement verification closed"
+}
+
+test_exec_fails_closed_when_jq_fails() {
+  local output code
+  write_fake_tools
+  rm -f "$LOG" "$MONITOR_STATE" "$CLIENT_COUNT_STATE" "$DISPATCH_STATE"
+  output=$(FM_VISUAL_TEST_JQ_FAIL_AFTER_DISPATCH=1 \
+    run_guard exec -- xdg-open "https://example.test" 2>&1)
+  code=$?
+  [ "$code" -ne 0 ] || fail "verification succeeded after jq failed"
+  assert_contains "$output" "jq parse failed" \
+    "verification did not propagate the jq failure"
+  assert_not_contains "$output" "launched on workspace 99" \
+    "verification reported launch success after jq failed"
+  pass "fm-visual-guard.sh: jq failures fail placement verification closed"
+}
+
 test_refuses_normal_user_workspace_by_default() {
   local output code
   write_fake_tools
@@ -526,6 +576,8 @@ test_exec_fails_when_client_appears_on_final_poll
 test_exec_corrals_matching_clients_from_any_misplaced_workspace
 test_exec_ignores_preexisting_hidden_client_until_late_leak_appears
 test_exec_accepts_numeric_monitor_id_for_headless_output
+test_exec_fails_closed_when_client_query_fails
+test_exec_fails_closed_when_jq_fails
 test_refuses_normal_user_workspace_by_default
 test_doctor_fails_when_hyprctl_missing
 test_doctor_checks_screenshot_dependency

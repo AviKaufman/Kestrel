@@ -270,10 +270,10 @@ cmdline_matches_visual_profile() {
 
 client_rows() {
   local clients monitors
-  clients=$(hyprland_json clients)
-  monitors=$(hyprland_json monitors)
+  clients=$(hyprland_json clients) || return 1
+  monitors=$(hyprland_json monitors) || return 1
   # shellcheck disable=SC2016
-  printf '%s\n' "$clients" | jq_call -r --argjson monitors "$monitors" '
+  jq_call -r --argjson monitors "$monitors" '
     .[] as $client
     | (($client.monitor // "") | tostring) as $monitor
     | (($monitors | map(select(((.id? // "") | tostring) == $monitor) | .name) | first) // $monitor) as $monitor_name
@@ -289,12 +289,13 @@ client_rows() {
       ]
     | @tsv
     | gsub("\t"; "\u001f")
-  '
+  ' <<< "$clients"
 }
 
 visual_client_rows() {
-  local address pid class initial title workspace_id workspace_name monitor cmdline
-  client_rows | while IFS="$RECORD_SEPARATOR" read -r address pid class initial title workspace_id workspace_name monitor; do
+  local rows address pid class initial title workspace_id workspace_name monitor cmdline
+  rows=$(client_rows) || return 1
+  while IFS="$RECORD_SEPARATOR" read -r address pid class initial title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
     cmdline=$(client_cmdline "$pid")
     if class_matches_visual_identity "$class" "$initial" || cmdline_matches_visual_profile "$cmdline"; then
@@ -302,15 +303,16 @@ visual_client_rows() {
         "$address" "$RECORD_SEPARATOR" "$pid" "$RECORD_SEPARATOR" "${class:-$initial}" "$RECORD_SEPARATOR" \
         "$title" "$RECORD_SEPARATOR" "$workspace_id" "$RECORD_SEPARATOR" "$workspace_name" "$RECORD_SEPARATOR" "$monitor"
     fi
-  done
+  done <<< "$rows"
 }
 
 visual_client_addresses() {
-  local address pid class title workspace_id workspace_name monitor
-  visual_client_rows | while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
+  local rows address pid class title workspace_id workspace_name monitor
+  rows=$(visual_client_rows) || return 1
+  while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
     printf '%s\n' "$address"
-  done
+  done <<< "$rows"
 }
 
 client_address_in_set() {
@@ -333,7 +335,7 @@ visual_client_status() {
   local preexisting=${1:-} misplaced=0 new_count=0 new_client_set=""
   local address pid class title workspace_id workspace_name monitor rows
   local -a new_addresses=()
-  rows=$(visual_client_rows)
+  rows=$(visual_client_rows) || return 1
   if [ -n "$rows" ]; then
     while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
       [ -n "$address" ] || continue
@@ -356,7 +358,7 @@ EOF
 
 remediate_misplaced_visual_clients() {
   local rows address pid class title workspace_id workspace_name monitor moved=0
-  rows=$(visual_client_rows)
+  rows=$(visual_client_rows) || return 1
   while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
     visual_client_is_hidden "$workspace_id" "$workspace_name" "$monitor" && continue
@@ -375,8 +377,10 @@ verify_visual_placement() {
   local preexisting=${1:-} remaining=$VERIFY_ATTEMPTS status misplaced new_count client_set remediated
   local stable_polls=0 saw_new_client=0 settling_client_set=""
   while [ "$remaining" -gt 0 ]; do
-    remediated=$(remediate_misplaced_visual_clients)
-    status=$(visual_client_status "$preexisting")
+    remediated=$(remediate_misplaced_visual_clients) \
+      || die "failed to query Codex visual clients during placement remediation"
+    status=$(visual_client_status "$preexisting") \
+      || die "failed to query Codex visual clients during placement verification"
     IFS="$RECORD_SEPARATOR" read -r misplaced new_count client_set <<EOF
 $status
 EOF
@@ -397,7 +401,8 @@ EOF
     sleep "$VERIFY_SLEEP"
     remaining=$((remaining - 1))
   done
-  status=$(visual_client_status "$preexisting")
+  status=$(visual_client_status "$preexisting") \
+    || die "failed to query Codex visual clients during final placement verification"
   IFS="$RECORD_SEPARATOR" read -r misplaced new_count client_set <<EOF
 $status
 EOF
@@ -414,7 +419,7 @@ guard_exec() {
   [ "$#" -gt 0 ] || die "exec requires a command after --"
 
   ensure_visual_target 1
-  preexisting=$(visual_client_addresses)
+  preexisting=$(visual_client_addresses) || die "failed to query existing Codex visual clients"
   command_string=$(join_shell_words "$@")
   env_assignments=$(guard_env_assignments)
   dispatch_string="[workspace $VISUAL_WORKSPACE silent] env $env_assignments $command_string"
@@ -476,9 +481,10 @@ guard_screenshot() {
 }
 
 guard_clients() {
-  local rows address pid class initial title workspace_id workspace_name monitor cmdline
+  local rows filtered_rows address pid class initial title workspace_id workspace_name monitor cmdline
   require_hyprland
-  rows=$(client_rows | while IFS="$RECORD_SEPARATOR" read -r address pid class initial title workspace_id workspace_name monitor; do
+  rows=$(client_rows) || die "failed to query Codex visual clients"
+  filtered_rows=$(while IFS="$RECORD_SEPARATOR" read -r address pid class initial title workspace_id workspace_name monitor; do
     [ -n "$address" ] || continue
     cmdline=$(client_cmdline "$pid")
     if [ "$monitor" = "$VISUAL_OUTPUT" ] \
@@ -489,9 +495,9 @@ guard_clients() {
       printf '%s\t%s\t%s\t%s\t%s\n' \
         "$address" "${class:-$initial}" "$title" "${workspace_name:-$workspace_id}" "$monitor"
     fi
-  done)
-  if [ -n "$rows" ]; then
-    printf '%s\n' "$rows"
+  done <<< "$rows")
+  if [ -n "$filtered_rows" ]; then
+    printf '%s\n' "$filtered_rows"
   else
     printf '(none)\n'
   fi
