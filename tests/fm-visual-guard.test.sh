@@ -10,6 +10,7 @@ FAKEBIN=$(fm_fakebin "$TMP_ROOT")
 LOG="$TMP_ROOT/calls.log"
 MONITOR_STATE="$TMP_ROOT/monitor-created"
 LEAK_STATE="$TMP_ROOT/leak-client"
+CLIENT_COUNT_STATE="$TMP_ROOT/client-count"
 
 write_fake_tools() {
   cat > "$FAKEBIN/hyprctl" <<'SH'
@@ -31,7 +32,34 @@ if [ "${1:-}" = "monitors" ] && [ "${2:-}" = "-j" ]; then
 fi
 
 if [ "${1:-}" = "clients" ] && [ "${2:-}" = "-j" ]; then
-  if [ -e "${FM_VISUAL_TEST_LEAK_STATE:-}" ]; then
+  count=0
+  [ -f "${FM_VISUAL_TEST_CLIENT_COUNT_STATE:-}" ] && count=$(cat "$FM_VISUAL_TEST_CLIENT_COUNT_STATE")
+  count=$((count + 1))
+  printf '%s\n' "$count" > "$FM_VISUAL_TEST_CLIENT_COUNT_STATE"
+
+  if [ "${FM_VISUAL_TEST_CLIENT_MODE:-}" = "late-leak" ]; then
+    if [ "$count" -lt 3 ]; then
+      cat <<'JSON'
+[
+  {"address":"0xdef","pid":12347,"class":"google-chrome","initialClass":"google-chrome","title":"User Chrome","workspace":{"id":1,"name":"1"},"monitor":"eDP-1"}
+]
+JSON
+    elif [ -e "${FM_VISUAL_TEST_LEAK_STATE:-}" ]; then
+      cat <<'JSON'
+[
+  {"address":"0xced","pid":12346,"class":"CodexVisual","initialClass":"CodexVisual","title":"Legacy","workspace":{"id":11,"name":"11"},"monitor":"eDP-1"},
+  {"address":"0xdef","pid":12347,"class":"google-chrome","initialClass":"google-chrome","title":"User Chrome","workspace":{"id":1,"name":"1"},"monitor":"eDP-1"}
+]
+JSON
+    else
+      cat <<'JSON'
+[
+  {"address":"0xced","pid":12346,"class":"CodexVisual","initialClass":"CodexVisual","title":"Legacy","workspace":{"id":99,"name":"99"},"monitor":"CODEX-HEADLESS"},
+  {"address":"0xdef","pid":12347,"class":"google-chrome","initialClass":"google-chrome","title":"User Chrome","workspace":{"id":1,"name":"1"},"monitor":"eDP-1"}
+]
+JSON
+    fi
+  elif [ -e "${FM_VISUAL_TEST_LEAK_STATE:-}" ]; then
     cat <<'JSON'
 [
   {"address":"0xabc","pid":12345,"class":"FirstmateVisual","initialClass":"FirstmateVisual","title":"Preview","workspace":{"id":99,"name":"99"},"monitor":"CODEX-HEADLESS"},
@@ -87,6 +115,7 @@ run_guard() {
     FM_VISUAL_TEST_LOG="$LOG" \
     FM_VISUAL_TEST_MONITOR_STATE="$MONITOR_STATE" \
     FM_VISUAL_TEST_LEAK_STATE="$LEAK_STATE" \
+    FM_VISUAL_TEST_CLIENT_COUNT_STATE="$CLIENT_COUNT_STATE" \
     FM_VISUAL_HYPRCTL=hyprctl \
     FM_VISUAL_GRIM=grim \
     FM_VISUAL_VERIFY_SLEEP=0 \
@@ -167,6 +196,37 @@ test_exec_corrals_legacy_codex_visual_leak() {
   pass "fm-visual-guard.sh: exec corrals legacy codex-visual-browser workspace leaks"
 }
 
+test_exec_exits_early_when_visual_clients_already_hidden() {
+  local count
+  write_fake_tools
+  rm -f "$LOG" "$MONITOR_STATE" "$LEAK_STATE" "$CLIENT_COUNT_STATE"
+  FM_VISUAL_VERIFY_ATTEMPTS=5 run_guard exec -- xdg-open "https://example.test" >/dev/null \
+    || fail "exec with already-hidden client failed"
+  count=$(cat "$CLIENT_COUNT_STATE")
+  [ "$count" -lt 5 ] || fail "verification exhausted attempts despite already-hidden client; clients calls=$count"
+  assert_no_grep $'hyprctl\tdispatch\tmovetoworkspacesilent' "$LOG" \
+    "guard moved a client even though every Codex visual client was already hidden"
+  pass "fm-visual-guard.sh: exits verification early after matching clients are already hidden"
+}
+
+test_exec_waits_for_late_visual_client_before_exiting() {
+  local count output
+  write_fake_tools
+  rm -f "$LOG" "$MONITOR_STATE" "$CLIENT_COUNT_STATE"
+  : > "$LEAK_STATE"
+  output=$(FM_VISUAL_TEST_CLIENT_MODE=late-leak FM_VISUAL_VERIFY_ATTEMPTS=6 run_guard exec -- xdg-open "https://example.test" 2>&1) \
+    || fail "exec with late-appearing client failed"
+  assert_absent "$LEAK_STATE" "late CodexVisual leak marker was not cleared"
+  count=$(cat "$CLIENT_COUNT_STATE")
+  [ "$count" -ge 3 ] || fail "verification exited before the late Codex visual client appeared; clients calls=$count"
+  [ "$count" -lt 6 ] || fail "verification did not exit after remediating the late Codex visual client; clients calls=$count"
+  assert_grep $'hyprctl\tdispatch\tmovetoworkspacesilent\t99,address:0xced' "$LOG" \
+    "guard did not move the late legacy CodexVisual client"
+  assert_contains "$output" "moved Codex visual client 0xced" \
+    "guard did not report remediation of the late visible client"
+  pass "fm-visual-guard.sh: keeps settling until a late visual client appears and is hidden"
+}
+
 test_refuses_normal_user_workspace_by_default() {
   local output code
   write_fake_tools
@@ -217,6 +277,8 @@ test_screenshot_routes_to_headless_output
 test_clients_filters_codex_visual_clients
 test_browser_uses_independent_firstmate_visual_class
 test_exec_corrals_legacy_codex_visual_leak
+test_exec_exits_early_when_visual_clients_already_hidden
+test_exec_waits_for_late_visual_client_before_exiting
 test_refuses_normal_user_workspace_by_default
 test_doctor_fails_when_hyprctl_missing
 test_doctor_checks_screenshot_dependency

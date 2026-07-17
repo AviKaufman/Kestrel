@@ -298,6 +298,41 @@ visible_visual_clients() {
   done
 }
 
+visual_client_rows() {
+  local address pid class initial title workspace_id workspace_name monitor cmdline
+  client_rows | while IFS=$'\t' read -r address pid class initial title workspace_id workspace_name monitor; do
+    [ -n "$address" ] || continue
+    cmdline=$(client_cmdline "$pid")
+    if class_matches_visual_identity "$class" "$initial" || cmdline_matches_visual_profile "$cmdline"; then
+      printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$address" "$pid" "${class:-$initial}" "$title" "$workspace_id" "$workspace_name" "$monitor"
+    fi
+  done
+}
+
+visual_client_is_hidden() {
+  local workspace_id=$1 workspace_name=$2 monitor=$3
+  { [ "$workspace_id" = "$VISUAL_WORKSPACE" ] || [ "$workspace_name" = "$VISUAL_WORKSPACE" ]; } \
+    && [ "$monitor" = "$VISUAL_OUTPUT" ]
+}
+
+visual_client_status() {
+  local count=0 misplaced=0 address pid class title workspace_id workspace_name monitor rows
+  rows=$(visual_client_rows)
+  if [ -n "$rows" ]; then
+    while IFS=$'\t' read -r address pid class title workspace_id workspace_name monitor; do
+      [ -n "$address" ] || continue
+      count=$((count + 1))
+      if ! visual_client_is_hidden "$workspace_id" "$workspace_name" "$monitor"; then
+        misplaced=$((misplaced + 1))
+      fi
+    done <<EOF
+$rows
+EOF
+  fi
+  printf '%s\t%s\n' "$count" "$misplaced"
+}
+
 remediate_visible_visual_clients() {
   local leaked address class title workspace monitor pid moved=0
   leaked=$(visible_visual_clients)
@@ -313,19 +348,29 @@ remediate_visible_visual_clients() {
   done <<EOF
 $leaked
 EOF
-
-  [ "$moved" -eq 0 ] || return 0
 }
 
 verify_visual_placement() {
-  local leaked remaining=$VERIFY_ATTEMPTS
+  local leaked remaining=$VERIFY_ATTEMPTS status count misplaced
   while [ "$remaining" -gt 0 ]; do
     remediate_visible_visual_clients
+    status=$(visual_client_status)
+    IFS=$'\t' read -r count misplaced <<EOF
+$status
+EOF
+    if [ "$count" -gt 0 ] && [ "$misplaced" -eq 0 ]; then
+      return 0
+    fi
     sleep "$VERIFY_SLEEP"
     remaining=$((remaining - 1))
   done
   leaked=$(visible_visual_clients)
   [ -z "$leaked" ] || die "Codex visual client remains on a visible workspace after remediation: $leaked"
+  status=$(visual_client_status)
+  IFS=$'\t' read -r count misplaced <<EOF
+$status
+EOF
+  [ "${misplaced:-0}" -eq 0 ] || die "Codex visual client remains outside workspace $VISUAL_WORKSPACE on $VISUAL_OUTPUT"
 }
 
 guard_exec() {
