@@ -240,7 +240,7 @@ Orca provides both the task worktree and terminal endpoint (see "Runtime backend
 A herdr, zellij, or cmux home is therefore never told `tmux` is missing, and the `treehouse` durable-lease upgrade check runs only for the backends that actually use treehouse.
 When `config/crew-dispatch.json` exists, bootstrap also requires `jq` for dispatch profile validation.
 When X mode is opted in, bootstrap also requires `curl` and `jq` before arming the relay poll shim.
-Codex-owned visual actions are checked at use time rather than by bootstrap: `bin/fm-visual-guard.sh doctor` requires `hyprctl`, `jq`, and `grim`, warns when Chrome or Chromium is unavailable, and its header and `--help` own the commands and environment overrides.
+On Hyprland hosts where `hyprctl` is available and `CODEX-HEADLESS` is the visual target, Codex-owned visual actions are checked at use time rather than by bootstrap: `bin/fm-visual-guard.sh doctor` requires `hyprctl`, `jq`, and `grim`, warns when Chrome or Chromium is unavailable, and its header and `--help` own the commands and environment overrides.
 `tasks-axi` and `quota-axi` are required bootstrap tools in every profile, the same class as `lavish-axi`.
 An absent or incompatible `tasks-axi` reports `MISSING: tasks-axi (install: npm install -g tasks-axi)`; when `config/backlog-backend` is not `manual` and compatible `tasks-axi` is on `PATH`, bootstrap stays silent and firstmate uses its verbs for routine backlog mutations, otherwise it hand-edits `data/backlog.md` until installation is approved and completed.
 An absent `quota-axi` reports `MISSING: quota-axi (install: npm install -g quota-axi)`; `bin/fm-dispatch-select.sh` still degrades to the first profile at runtime when quota data is unavailable.

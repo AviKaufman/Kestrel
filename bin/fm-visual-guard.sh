@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Deterministic Codex GUI guard for Firstmate.
 #
-# Use this instead of plain GUI launchers, raw browser commands, or ad hoc
-# Hyprland dispatches when Codex/crewmates need a visual surface.
+# On Hyprland hosts where hyprctl is available and CODEX-HEADLESS is the visual
+# target, use this instead of plain GUI launchers, raw browser commands, or ad
+# hoc Hyprland dispatches when Codex/crewmates need a visual surface.
 # It dispatches windows to workspace 99 on the hidden CODEX-HEADLESS output and
 # keeps CODEX_GUI_GUARD=1 in the launched process environment so local wrappers
 # can recognize Firstmate-owned GUI work.
@@ -44,6 +45,9 @@ Usage:
   $(basename "$0") screenshot <path>
   $(basename "$0") clients
   $(basename "$0") doctor
+
+Scope:
+  Hyprland/CODEX-HEADLESS visual workflows where hyprctl is available
 
 Environment:
   FM_VISUAL_OUTPUT       output name, default CODEX-HEADLESS
