@@ -241,7 +241,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 2. Stay inside this worktree; the only files you may write outside it are the report and the status file below.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Use \`$FM_ROOT/bin/fm-visual-guard.sh\` for every GUI, browser, app-launcher, and screenshot action.
-   Prefer \`browser <url>\`, \`exec -- <command ...>\`, \`screenshot <path>\`, \`clients\`, and \`doctor\` over plain launchers, normal Chrome, legacy Codex visual wrappers, or manual Hyprland dispatches.
+   Read its header and \`--help\` for the authoritative commands and hidden-placement/remediation mechanics; do not use plain launchers, normal Chrome, legacy Codex visual wrappers, or manual Hyprland dispatches.
 5. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.
@@ -350,7 +350,7 @@ $RULE1
 2. Stay inside this worktree; modify nothing outside it.
 3. Use gh-axi for GitHub operations and chrome-devtools-axi for browser operations.
 4. Use \`$FM_ROOT/bin/fm-visual-guard.sh\` for every GUI, browser, app-launcher, and screenshot action.
-   Prefer \`browser <url>\`, \`exec -- <command ...>\`, \`screenshot <path>\`, \`clients\`, and \`doctor\` over plain launchers, normal Chrome, legacy Codex visual wrappers, or manual Hyprland dispatches.
+   Read its header and \`--help\` for the authoritative commands and hidden-placement/remediation mechanics; do not use plain launchers, normal Chrome, legacy Codex visual wrappers, or manual Hyprland dispatches.
 5. Report status by appending one line:
    \`echo "{state}: {one short line}" >> $STATUS_FILE\`
    States: working, needs-decision, blocked, $PAUSED_VERB, done, failed.

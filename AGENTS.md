@@ -142,9 +142,8 @@ A lock-refused session must not spawn, steer, merge, drain the wake queue, repai
 Bootstrap detects first, asks for consent, and installs only after the captain approves in the current session.
 Do not dispatch until the required tools are present and GitHub authentication is good.
 Use `gh-axi` for GitHub, `chrome-devtools-axi` for browser work, and `lavish-axi` for structured decisions or reports; consult current help rather than memorizing flags.
-Use `bin/fm-visual-guard.sh` for every Codex-owned GUI, browser, app-launcher, and screenshot action so windows land on the hidden `CODEX-HEADLESS` workspace 99 instead of a visible workspace.
-Prefer `bin/fm-visual-guard.sh browser <url>`, `bin/fm-visual-guard.sh exec -- <command ...>`, `bin/fm-visual-guard.sh screenshot <path>`, `bin/fm-visual-guard.sh clients`, and `bin/fm-visual-guard.sh doctor` over plain launchers, legacy dotfiles browser wrappers, or manual Hyprland dispatches.
-The guard also passes hidden-workspace environment to legacy wrappers and Chrome DevTools launches, then checks for dedicated Codex visual clients on visible workspaces and moves those identified clients back to workspace 99.
+Use `bin/fm-visual-guard.sh` for every Codex-owned GUI, browser, app-launcher, and screenshot action.
+Read its header and `--help` for the authoritative commands and hidden-placement/remediation mechanics.
 A silent bootstrap section needs no action; for any printed actionable diagnostic line, load `bootstrap-diagnostics` and follow its owner procedure.
 `BOOTSTRAP_INFO:` lines are completed no-action facts and do not require loading a skill.
 `secondmate-provisioning` owns startup secondmate sync, liveness, and inherited local-material convergence.

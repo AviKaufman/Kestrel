@@ -3,9 +3,13 @@
 #
 # Use this instead of plain GUI launchers, raw browser commands, or ad hoc
 # Hyprland dispatches when Codex/crewmates need a visual surface.
-# It keeps windows on workspace 99 on the hidden CODEX-HEADLESS output and keeps
-# CODEX_GUI_GUARD=1 in the launched process environment so local wrappers can
-# recognize Firstmate-owned GUI work.
+# It dispatches windows to workspace 99 on the hidden CODEX-HEADLESS output and
+# keeps CODEX_GUI_GUARD=1 in the launched process environment so local wrappers
+# can recognize Firstmate-owned GUI work.
+# After dispatch, it identifies dedicated Firstmate and legacy Codex visual
+# clients by class or isolated Chrome profile, moves any misplaced matches to
+# the hidden target, and succeeds only after newly observed matches remain there
+# for the configured settling interval.
 #
 # Usage:
 #   fm-visual-guard.sh ensure
@@ -50,7 +54,13 @@ Environment:
   FM_VISUAL_GRIM         grim command/path, default grim
   FM_VISUAL_JQ           jq command/path, default jq
   FM_VISUAL_BROWSER_CMD  browser command/path, otherwise Chrome/Chromium on PATH
+  FM_VISUAL_BROWSER_PROFILE  browser profile path, otherwise firstmate state path
+  FM_VISUAL_DEVTOOLS_PROFILE Chrome DevTools profile path, otherwise firstmate state path
+  FM_VISUAL_ALLOW_USER_WORKSPACE  truthy to allow numeric workspace 1-11, default false
   FM_VISUAL_LEGACY_CLASSES  comma-separated older dedicated classes to corral, default CodexVisual
+  FM_VISUAL_VERIFY_ATTEMPTS maximum post-launch placement polls, default 10
+  FM_VISUAL_VERIFY_SLEEP   seconds between placement polls, default 0.2
+  FM_VISUAL_VERIFY_SETTLE_POLLS  unchanged hidden polls required for success, default 3
 EOF
 }
 

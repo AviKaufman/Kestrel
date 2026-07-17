@@ -17,7 +17,7 @@ The shared no-mistakes gate refusal used by `fm-spawn.sh`, `fm-send.sh`, and `fm
 | `fm-backlog-handoff.sh`  | Validate and delegate queued backlog-item moves into a secondmate home               |
 | `fm-decision-hold.sh`    | Create, verify, complete, and resolve durable captain-held decisions                 |
 | `fm-brief.sh`            | Scaffold ship, scout, secondmate-charter, and Herdr-lab briefs                       |
-| `fm-visual-guard.sh`     | Keep Codex-owned GUI and browser windows on workspace 99 on `CODEX-HEADLESS`, including self-checks that corral dedicated visual clients leaking onto visible workspaces |
+| `fm-visual-guard.sh`     | Guard Codex-owned GUI, browser, app-launcher, and screenshot actions; its header and `--help` own placement and remediation mechanics |
 | `fm-herdr-lab.sh`        | Provision and guardedly operate an isolated, never-default Herdr lab session         |
 | `fm-ensure-agents-md.sh` | Ensure a project's real `AGENTS.md`, its `CLAUDE.md` symlink, and the canonical self-governance section |
 | `fm-guard.sh`            | Warn on primary-checkout tangles, pending queued wakes, and stale watcher liveness   |
