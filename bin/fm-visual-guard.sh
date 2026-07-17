@@ -357,13 +357,16 @@ EOF
 }
 
 verify_visual_placement() {
-  local preexisting=${1:-} remaining=$VERIFY_ATTEMPTS status misplaced new_count remediated stable_polls=0
+  local preexisting=${1:-} remaining=$VERIFY_ATTEMPTS status misplaced new_count remediated stable_polls=0 saw_new_client=0
   while [ "$remaining" -gt 0 ]; do
     remediated=$(remediate_misplaced_visual_clients)
     status=$(visual_client_status "$preexisting")
     IFS="$RECORD_SEPARATOR" read -r misplaced new_count <<EOF
 $status
 EOF
+    if [ "$new_count" -gt 0 ]; then
+      saw_new_client=1
+    fi
     if [ "$new_count" -gt 0 ] && [ "$misplaced" -eq 0 ] && [ "$remediated" -eq 0 ]; then
       stable_polls=$((stable_polls + 1))
       if [ "$stable_polls" -ge "$VERIFY_SETTLE_POLLS" ]; then
@@ -379,7 +382,11 @@ EOF
   IFS="$RECORD_SEPARATOR" read -r misplaced new_count <<EOF
 $status
 EOF
+  if [ "$new_count" -gt 0 ]; then
+    saw_new_client=1
+  fi
   [ "${misplaced:-0}" -eq 0 ] || die "Codex visual client remains outside workspace $VISUAL_WORKSPACE on $VISUAL_OUTPUT"
+  [ "$saw_new_client" -eq 0 ] || die "Codex visual client did not remain hidden for $VERIFY_SETTLE_POLLS consecutive polls before verification timed out"
 }
 
 guard_exec() {
