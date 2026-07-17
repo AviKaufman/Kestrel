@@ -106,6 +106,29 @@ JSON
 ]
 JSON
     fi
+  elif [ "${FM_VISUAL_TEST_CLIENT_MODE:-}" = "new-hidden-late-hidden-sibling" ]; then
+    if [ ! -e "${FM_VISUAL_TEST_DISPATCH_STATE:-}" ]; then
+      cat <<'JSON'
+[
+  {"address":"0xdef","pid":12347,"class":"google-chrome","initialClass":"google-chrome","title":"User Chrome","workspace":{"id":1,"name":"1"},"monitor":"eDP-1"}
+]
+JSON
+    elif [ "$count" -lt 6 ]; then
+      cat <<'JSON'
+[
+  {"address":"0xabc","pid":12345,"class":"FirstmateVisual","initialClass":"FirstmateVisual","title":"Preview","workspace":{"id":99,"name":"99"},"monitor":"CODEX-HEADLESS"},
+  {"address":"0xdef","pid":12347,"class":"google-chrome","initialClass":"google-chrome","title":"User Chrome","workspace":{"id":1,"name":"1"},"monitor":"eDP-1"}
+]
+JSON
+    else
+      cat <<'JSON'
+[
+  {"address":"0xabc","pid":12345,"class":"FirstmateVisual","initialClass":"FirstmateVisual","title":"Preview","workspace":{"id":99,"name":"99"},"monitor":"CODEX-HEADLESS"},
+  {"address":"0xced","pid":12346,"class":"CodexVisual","initialClass":"CodexVisual","title":"Sibling","workspace":{"id":99,"name":"99"},"monitor":"CODEX-HEADLESS"},
+  {"address":"0xdef","pid":12347,"class":"google-chrome","initialClass":"google-chrome","title":"User Chrome","workspace":{"id":1,"name":"1"},"monitor":"eDP-1"}
+]
+JSON
+    fi
   elif [ "${FM_VISUAL_TEST_CLIENT_MODE:-}" = "misplaced-non-user" ]; then
     if [ -e "${FM_VISUAL_TEST_LEAK_STATE:-}" ]; then
       cat <<'JSON'
@@ -343,7 +366,7 @@ test_exec_exits_early_when_new_visual_client_is_hidden() {
     run_guard exec -- xdg-open "https://example.test" >/dev/null \
     || fail "exec with newly hidden client failed"
   count=$(cat "$CLIENT_COUNT_STATE")
-  [ "$count" -lt 8 ] || fail "verification exhausted attempts despite newly hidden client; clients calls=$count"
+  [ "$count" -eq 9 ] || fail "verification did not require three unchanged hidden polls; clients calls=$count"
   assert_no_grep $'hyprctl\tdispatch\tmovetoworkspacesilent' "$LOG" \
     "guard moved a client even though every Codex visual client was already hidden"
   pass "fm-visual-guard.sh: exits verification early after a new matching client is hidden"
@@ -365,6 +388,20 @@ test_exec_settles_before_corralling_delayed_sibling() {
   assert_contains "$output" "moved Codex visual client 0xced" \
     "guard did not report remediation of the delayed sibling"
   pass "fm-visual-guard.sh: verification settles before accepting hidden clients"
+}
+
+test_exec_restarts_settling_for_late_hidden_sibling() {
+  local count
+  write_fake_tools
+  rm -f "$LOG" "$MONITOR_STATE" "$LEAK_STATE" "$CLIENT_COUNT_STATE" "$DISPATCH_STATE"
+  FM_VISUAL_TEST_CLIENT_MODE=new-hidden-late-hidden-sibling FM_VISUAL_VERIFY_ATTEMPTS=7 \
+    run_guard exec -- xdg-open "https://example.test" >/dev/null \
+    || fail "exec with late hidden sibling failed"
+  count=$(cat "$CLIENT_COUNT_STATE")
+  [ "$count" -eq 13 ] || fail "verification did not restart settling for the late hidden sibling; clients calls=$count"
+  assert_no_grep $'hyprctl\tdispatch\tmovetoworkspacesilent' "$LOG" \
+    "guard moved a sibling that first appeared already hidden"
+  pass "fm-visual-guard.sh: late hidden siblings restart placement settling"
 }
 
 test_exec_fails_when_client_appears_on_final_poll() {
@@ -421,7 +458,7 @@ test_exec_accepts_numeric_monitor_id_for_headless_output() {
   write_fake_tools
   rm -f "$LOG" "$MONITOR_STATE" "$CLIENT_COUNT_STATE" "$DISPATCH_STATE"
   : > "$MONITOR_STATE"
-  output=$(FM_VISUAL_TEST_CLIENT_MODE=numeric-hidden FM_VISUAL_VERIFY_ATTEMPTS=3 \
+  output=$(FM_VISUAL_TEST_CLIENT_MODE=numeric-hidden FM_VISUAL_VERIFY_ATTEMPTS=4 \
     run_guard exec -- xdg-open "https://example.test" 2>&1) \
     || fail "exec rejected a hidden client reported with numeric monitor id"
   assert_contains "$output" "launched on workspace 99" \
@@ -484,6 +521,7 @@ test_browser_uses_independent_firstmate_visual_class
 test_exec_corrals_legacy_codex_visual_leak
 test_exec_exits_early_when_new_visual_client_is_hidden
 test_exec_settles_before_corralling_delayed_sibling
+test_exec_restarts_settling_for_late_hidden_sibling
 test_exec_fails_when_client_appears_on_final_poll
 test_exec_corrals_matching_clients_from_any_misplaced_workspace
 test_exec_ignores_preexisting_hidden_client_until_late_leak_appears

@@ -320,14 +320,16 @@ visual_client_is_hidden() {
 }
 
 visual_client_status() {
-  local preexisting=${1:-} misplaced=0 new_count=0
+  local preexisting=${1:-} misplaced=0 new_count=0 new_client_set=""
   local address pid class title workspace_id workspace_name monitor rows
+  local -a new_addresses=()
   rows=$(visual_client_rows)
   if [ -n "$rows" ]; then
     while IFS="$RECORD_SEPARATOR" read -r address pid class title workspace_id workspace_name monitor; do
       [ -n "$address" ] || continue
       if ! client_address_in_set "$address" "$preexisting"; then
         new_count=$((new_count + 1))
+        new_addresses+=("$address")
       fi
       if ! visual_client_is_hidden "$workspace_id" "$workspace_name" "$monitor"; then
         misplaced=$((misplaced + 1))
@@ -336,7 +338,10 @@ visual_client_status() {
 $rows
 EOF
   fi
-  printf '%s%s%s\n' "$misplaced" "$RECORD_SEPARATOR" "$new_count"
+  if [ "${#new_addresses[@]}" -gt 0 ]; then
+    new_client_set=$(printf '%s\n' "${new_addresses[@]}" | LC_ALL=C sort -u | tr '\n' ',')
+  fi
+  printf '%s%s%s%s%s\n' "$misplaced" "$RECORD_SEPARATOR" "$new_count" "$RECORD_SEPARATOR" "$new_client_set"
 }
 
 remediate_misplaced_visual_clients() {
@@ -357,17 +362,21 @@ EOF
 }
 
 verify_visual_placement() {
-  local preexisting=${1:-} remaining=$VERIFY_ATTEMPTS status misplaced new_count remediated stable_polls=0 saw_new_client=0
+  local preexisting=${1:-} remaining=$VERIFY_ATTEMPTS status misplaced new_count client_set remediated
+  local stable_polls=0 saw_new_client=0 settling_client_set=""
   while [ "$remaining" -gt 0 ]; do
     remediated=$(remediate_misplaced_visual_clients)
     status=$(visual_client_status "$preexisting")
-    IFS="$RECORD_SEPARATOR" read -r misplaced new_count <<EOF
+    IFS="$RECORD_SEPARATOR" read -r misplaced new_count client_set <<EOF
 $status
 EOF
     if [ "$new_count" -gt 0 ]; then
       saw_new_client=1
     fi
-    if [ "$new_count" -gt 0 ] && [ "$misplaced" -eq 0 ] && [ "$remediated" -eq 0 ]; then
+    if [ "$client_set" != "$settling_client_set" ]; then
+      settling_client_set=$client_set
+      stable_polls=0
+    elif [ "$new_count" -gt 0 ] && [ "$misplaced" -eq 0 ] && [ "$remediated" -eq 0 ]; then
       stable_polls=$((stable_polls + 1))
       if [ "$stable_polls" -ge "$VERIFY_SETTLE_POLLS" ]; then
         return 0
@@ -379,7 +388,7 @@ EOF
     remaining=$((remaining - 1))
   done
   status=$(visual_client_status "$preexisting")
-  IFS="$RECORD_SEPARATOR" read -r misplaced new_count <<EOF
+  IFS="$RECORD_SEPARATOR" read -r misplaced new_count client_set <<EOF
 $status
 EOF
   if [ "$new_count" -gt 0 ]; then
