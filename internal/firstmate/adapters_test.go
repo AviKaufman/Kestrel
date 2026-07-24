@@ -24,7 +24,7 @@ func TestShellAdaptersPassHomeAndExactArguments(t *testing.T) {
 	logPath := filepath.Join(root, "argv.log")
 	stateScript := writeAdapter(t, root, "crew-state", `printf '%s|%s|%s\n' "$FM_HOME" "$1" "$#" > "$ADAPTER_LOG"
 printf 'state: working · source: pane · harness busy\n'`)
-	peekScript := writeAdapter(t, root, "peek", `printf '%s|%s|%s|%s\n' "$FM_HOME" "$1" "$2" "$#" >> "$ADAPTER_LOG"
+	peekScript := writeAdapter(t, root, "peek", `printf '%s|%s|%s|%s|%s\n' "$FM_HOME" "$1" "$2" "$#" "$FM_GUARD_READ_ONLY" >> "$ADAPTER_LOG"
 printf 'bounded worker output\n'`)
 	home := Home{Root: "/fake/home", StateDir: "/fake/home/state", DataDir: "/fake/home/data"}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -52,7 +52,7 @@ printf 'bounded worker output\n'`)
 	if !strings.Contains(logText, "/fake/home|task-a|1") {
 		t.Fatalf("state adapter log = %q", logText)
 	}
-	if !strings.Contains(logText, "/fake/home|task-a|12|2") {
+	if !strings.Contains(logText, "/fake/home|task-a|12|2|1") {
 		t.Fatalf("peek adapter log = %q", logText)
 	}
 }

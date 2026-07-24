@@ -107,7 +107,9 @@ func (reader ShellLiveReader) Read(ctx context.Context, taskID string) ([]string
 func adapterEnvironment(home Home, extra []string) []string {
 	environment := make([]string, 0, len(os.Environ())+len(extra)+2)
 	for _, entry := range append(os.Environ(), extra...) {
-		if strings.HasPrefix(entry, "FM_HOME=") || strings.HasPrefix(entry, "FM_STATE_OVERRIDE=") {
+		if strings.HasPrefix(entry, "FM_HOME=") ||
+			strings.HasPrefix(entry, "FM_STATE_OVERRIDE=") ||
+			strings.HasPrefix(entry, "FM_GUARD_READ_ONLY=") {
 			continue
 		}
 		environment = append(environment, entry)
@@ -116,6 +118,7 @@ func adapterEnvironment(home Home, extra []string) []string {
 		environment,
 		"FM_HOME="+home.Root,
 		"FM_STATE_OVERRIDE="+home.StateDir,
+		"FM_GUARD_READ_ONLY=1",
 	)
 }
 

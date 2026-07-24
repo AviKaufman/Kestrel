@@ -2,11 +2,13 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/kunchenguid/firstmate/internal/firstmate"
 )
@@ -14,6 +16,22 @@ import (
 type fakeSource struct {
 	tasks []firstmate.Task
 	live  []string
+}
+
+type deadlineCheckingSource struct{}
+
+func (deadlineCheckingSource) Load(ctx context.Context) ([]firstmate.Task, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, errors.New("missing deadline")
+	}
+	return sampleTasks(), nil
+}
+
+func (deadlineCheckingSource) LoadLive(ctx context.Context, _ string) ([]string, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, errors.New("missing deadline")
+	}
+	return []string{"bounded"}, nil
 }
 
 func (source fakeSource) Load(context.Context) ([]firstmate.Task, error) {
@@ -51,6 +69,44 @@ func TestModelKeyboardNavigationAndOutputSwitch(t *testing.T) {
 	model = updateModel(t, model, specialKey(tea.KeyEscape))
 	if model.OutputMode() != ReportsMode {
 		t.Fatalf("esc mode = %v, want ReportsMode", model.OutputMode())
+	}
+}
+
+func TestReportsNavigationDoesNotReadLiveWorkerOutput(t *testing.T) {
+	tasks := sampleTasks()
+	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
+
+	_, command := model.Update(keyPress("j"))
+	if command != nil {
+		t.Fatal("Reports-mode navigation returned a live-read command")
+	}
+}
+
+func TestInteractiveAdapterCommandsCarryDeadlines(t *testing.T) {
+	model := NewModel("/fake/home", sampleTasks(), nil, deadlineCheckingSource{})
+
+	updated, command := model.Update(specialKey(tea.KeyRight))
+	if command == nil {
+		t.Fatal("right returned nil live-read command")
+	}
+	message, ok := command().(liveLoadedMsg)
+	if !ok {
+		t.Fatalf("live command returned %T", message)
+	}
+	if message.err != nil {
+		t.Fatalf("live command error = %v", message.err)
+	}
+	model = updated.(Model)
+	_, command = model.Update(keyPress("r"))
+	if command == nil {
+		t.Fatal("r returned nil refresh command")
+	}
+	refresh, ok := command().(fleetLoadedMsg)
+	if !ok {
+		t.Fatalf("refresh command returned %T", refresh)
+	}
+	if refresh.err != nil {
+		t.Fatalf("refresh command error = %v", refresh.err)
 	}
 }
 
@@ -98,6 +154,9 @@ func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 		if width := lipgloss.Width(line); width > 64 {
 			t.Fatalf("rendered line width = %d, want <= 64: %q", width, line)
 		}
+	}
+	if bottomBorders := strings.Count(ansi.Strip(content), "└"); bottomBorders < 3 {
+		t.Fatalf("rendered bottom borders = %d, want header, list, and inspector borders:\n%s", bottomBorders, content)
 	}
 }
 

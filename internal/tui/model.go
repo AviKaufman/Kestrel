@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
@@ -10,6 +11,8 @@ import (
 
 	"github.com/kunchenguid/firstmate/internal/firstmate"
 )
+
+const interactiveReadTimeout = 15 * time.Second
 
 // OutputMode selects the dominant output region.
 type OutputMode int
@@ -102,7 +105,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.selected = 0
 		}
 		model.err = nil
-		return model, model.loadSelectedLive()
+		return model, model.loadSelectedLiveIfVisible()
 	case liveLoadedMsg:
 		if message.taskID != model.selectedID() {
 			return model, nil
@@ -136,22 +139,22 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(message, model.keys.Up):
 			if model.selected > 0 {
 				model.selected--
-				return model, model.loadSelectedLive()
+				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Down):
 			if model.selected+1 < len(model.tasks) {
 				model.selected++
-				return model, model.loadSelectedLive()
+				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Top):
 			if len(model.tasks) > 0 {
 				model.selected = 0
-				return model, model.loadSelectedLive()
+				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Bottom):
 			if len(model.tasks) > 0 {
 				model.selected = len(model.tasks) - 1
-				return model, model.loadSelectedLive()
+				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Reports):
 			model.outputMode = ReportsMode
@@ -202,7 +205,9 @@ func (model Model) refresh() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		tasks, err := model.source.Load(context.Background())
+		ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
+		defer cancel()
+		tasks, err := model.source.Load(ctx)
 		return fleetLoadedMsg{tasks: tasks, err: err}
 	}
 }
@@ -213,9 +218,18 @@ func (model Model) loadSelectedLive() tea.Cmd {
 	}
 	taskID := model.selectedID()
 	return func() tea.Msg {
-		lines, err := model.source.LoadLive(context.Background(), taskID)
+		ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
+		defer cancel()
+		lines, err := model.source.LoadLive(ctx, taskID)
 		return liveLoadedMsg{taskID: taskID, lines: lines, err: err}
 	}
+}
+
+func (model Model) loadSelectedLiveIfVisible() tea.Cmd {
+	if model.outputMode != LiveMode {
+		return nil
+	}
+	return model.loadSelectedLive()
 }
 
 func indexOfTask(tasks []firstmate.Task, taskID string) int {

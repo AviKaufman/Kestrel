@@ -60,7 +60,7 @@ func (model Model) render() string {
 
 func renderHeader(home string, width int) string {
 	content := titleStyle.Render("FIRSTMATE TUI") + "  " + labelStyle.Render("home: ") + home
-	return panelStyle(width, 3).Render(fitLines(content, max(1, width-2)))
+	return panelStyle(width, 3).Render(fitBlock(content, max(1, width-2), 1))
 }
 
 func renderTaskList(tasks []firstmate.Task, selected, width, height int) string {
@@ -83,7 +83,7 @@ func renderTaskList(tasks []firstmate.Task, selected, width, height int) string 
 			lines = append(lines, labelStyle.Render(ansi.Truncate(detail, innerWidth, "…")))
 		}
 	}
-	return panelStyle(width, height).Render(fitLines(strings.Join(lines, "\n"), innerWidth))
+	return panelStyle(width, height).Render(fitBlock(strings.Join(lines, "\n"), innerWidth, max(1, height-2)))
 }
 
 func renderInspector(model Model, width, height int) string {
@@ -130,7 +130,7 @@ func renderInspector(model Model, width, height int) string {
 	}
 	content := strings.Join(header, "\n") + "\n\n" + output
 	content = ansi.Hardwrap(content, innerWidth, false)
-	return panelStyle(width, height).Render(fitLines(content, innerWidth))
+	return panelStyle(width, height).Render(fitBlock(content, innerWidth, max(1, height-2)))
 }
 
 func renderModeSwitch(mode OutputMode) string {
@@ -197,17 +197,17 @@ func renderHelp(model Model, width, height int) string {
 		"",
 		labelStyle.Render("All views are read-only. Live never accepts input."),
 	}
-	return panelStyle(width, height).Render(fitLines(strings.Join(lines, "\n"), max(1, width-2)))
+	return panelStyle(width, height).Render(fitBlock(strings.Join(lines, "\n"), max(1, width-2), max(1, height-2)))
 }
 
 func panelStyle(width, height int) lipgloss.Style {
+	contentWidth := max(1, width-2)
+	contentHeight := max(1, height-2)
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(colorMuted).
-		Width(max(1, width-2)).
-		Height(max(1, height-2)).
-		MaxWidth(max(1, width)).
-		MaxHeight(max(1, height))
+		Width(contentWidth).
+		Height(contentHeight)
 }
 
 func stateStyle(state string) lipgloss.Style {
@@ -238,6 +238,15 @@ func fitLines(content string, width int) string {
 }
 
 func fitFrame(content string, width, height int) string {
+	content = fitLines(content, width)
+	lines := strings.Split(content, "\n")
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fitBlock(content string, width, height int) string {
 	content = fitLines(content, width)
 	lines := strings.Split(content, "\n")
 	if len(lines) > height {
