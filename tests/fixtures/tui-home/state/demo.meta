@@ -1,0 +1,9 @@
+project=/projects/demo
+kind=scout
+mode=local-only
+yolo=off
+harness=codex
+model=gpt-5.5
+effort=high
+worktree=/worktrees/demo
+window=firstmate:fm-demo
