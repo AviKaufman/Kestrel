@@ -6,7 +6,7 @@ import (
 )
 
 func TestRenderSnapshotIsStableAndComplete(t *testing.T) {
-	snapshot := RenderSnapshot("/fake/home", sampleTasks(), []string{"bounded worker line"})
+	snapshot := RenderSnapshot("/fake/home", availableHub(), sampleTasks(), []string{"bounded worker line"})
 
 	for _, expected := range []string{
 		"FIRSTMATE TUI SNAPSHOT",
@@ -48,13 +48,13 @@ func TestRenderSnapshotIsStableAndComplete(t *testing.T) {
 }
 
 func TestRenderSnapshotShowsEmptyFleetAndAbsentReport(t *testing.T) {
-	empty := RenderSnapshot("/fake/home", nil, nil)
+	empty := RenderSnapshot("/fake/home", availableHub(), nil, nil)
 	if !strings.Contains(empty, "No task metadata found.") {
 		t.Fatalf("empty snapshot = %q", empty)
 	}
 
 	tasks := sampleTasks()[1:]
-	absent := RenderSnapshot("/fake/home", tasks, nil)
+	absent := RenderSnapshot("/fake/home", availableHub(), tasks, nil)
 	if !strings.Contains(absent, "Direct Codex sessions have no durable Firstmate report.") {
 		t.Fatalf("absent report snapshot:\n%s", absent)
 	}

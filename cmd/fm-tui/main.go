@@ -25,6 +25,7 @@ type options struct {
 	peekPath   string
 	directPath string
 	sendPath   string
+	hubPath    string
 	snapshot   bool
 	statusRows int
 	liveRows   int
@@ -45,6 +46,7 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 	flags.StringVar(&options.peekPath, "peek", "", "path to fm-peek.sh")
 	flags.StringVar(&options.directPath, "direct", "", "path to fm-tui-direct.sh")
 	flags.StringVar(&options.sendPath, "send", "", "path to fm-send.sh")
+	flags.StringVar(&options.hubPath, "hub", "", "path to fm-tui-hub.sh")
 	flags.BoolVar(&options.snapshot, "snapshot", false, "print deterministic non-interactive output")
 	flags.IntVar(&options.statusRows, "status-lines", 20, "maximum status events per task")
 	flags.IntVar(&options.liveRows, "live-lines", 40, "maximum captured worker lines")
@@ -99,6 +101,11 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "fm-tui: managed-send adapter: %v\n", err)
 		return 1
 	}
+	hubPath, err := resolveAdapter(options.hubPath, filepath.Join(root, "bin", "fm-tui-hub.sh"))
+	if err != nil {
+		fmt.Fprintf(stderr, "fm-tui: hub adapter: %v\n", err)
+		return 1
+	}
 
 	loader := firstmate.Loader{
 		Home: home,
@@ -129,6 +136,10 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 			Home:       home,
 			PrefixArgs: []string{"send"},
 		},
+		Hub: firstmate.ShellHubAdapter{
+			Path: hubPath,
+			Home: home,
+		},
 		StatusMaxLines: options.statusRows,
 		StatusMaxBytes: 64 * 1024,
 		ReportMaxBytes: 64 * 1024,
@@ -141,6 +152,8 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "fm-tui: load tasks: %v\n", err)
 		return 1
 	}
+	hubTarget, hubErr := loader.LoadHub(ctx)
+	hub := tui.HubState{Target: hubTarget, Err: hubErr}
 	var live []string
 	if len(tasks) > 0 {
 		live, err = loader.LoadLive(ctx, tasks[0])
@@ -150,11 +163,11 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 	}
 
 	if options.snapshot {
-		fmt.Fprint(stdout, tui.RenderSnapshot(home.Root, tasks, live))
+		fmt.Fprint(stdout, tui.RenderSnapshot(home.Root, hub, tasks, live))
 		return 0
 	}
 
-	program := tea.NewProgram(tui.NewModel(home.Root, tasks, live, loader))
+	program := tea.NewProgram(tui.NewModel(home.Root, hub, tasks, live, loader))
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintf(stderr, "fm-tui: interactive session: %v\n", err)
 		return 1

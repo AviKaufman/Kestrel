@@ -34,18 +34,18 @@ var (
 func (model Model) render() string {
 	width := max(40, model.width)
 	height := max(16, model.height)
-	header := renderHeader(model.home, len(model.tasks), width)
+	header := renderHeader(model, width)
 	bodyHeight := max(10, height-lipgloss.Height(header))
 	var body string
 	if width < 76 {
 		listHeight := min(5, max(3, bodyHeight/4))
-		list := renderTaskList(model.tasks, model.selected, width, listHeight)
+		list := renderDestinationList(model, width, listHeight)
 		inspector := renderInspector(model, width, max(6, bodyHeight-listHeight))
 		body = lipgloss.JoinVertical(lipgloss.Left, list, inspector)
 	} else {
 		leftWidth := max(24, width/4)
 		rightWidth := max(40, width-leftWidth)
-		list := renderTaskList(model.tasks, model.selected, leftWidth, bodyHeight)
+		list := renderDestinationList(model, leftWidth, bodyHeight)
 		inspector := renderInspector(model, rightWidth, bodyHeight)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, list, inspector)
 	}
@@ -59,26 +59,53 @@ func (model Model) render() string {
 	return frame
 }
 
-func renderHeader(home string, workerCount, width int) string {
-	content := fmt.Sprintf(" firstmate  |  workers %d  |  home %s  |  ? help ", workerCount, home)
+func renderHeader(model Model, width int) string {
+	managed := countOwnership(model.tasks, firstmate.FirstmateManaged)
+	private := countOwnership(model.tasks, firstmate.CaptainPrivate)
+	tab := func(destination Destination, label string) string {
+		if model.destination == destination {
+			return "[" + label + "]"
+		}
+		return label
+	}
+	content := fmt.Sprintf(
+		" firstmate | 1 %s  2 %s %d  3 %s %d | workers %d | home %s | ? help ",
+		tab(HubDestination, "HUB"),
+		tab(ManagedDestination, "MANAGED"),
+		managed,
+		tab(PrivateDestination, "PRIVATE"),
+		private,
+		len(model.tasks),
+		model.home,
+	)
 	return headerStyle.Width(width).Render(ansi.Truncate(content, width, "…"))
 }
 
-func renderTaskList(tasks []firstmate.Task, selected, width, height int) string {
+func renderDestinationList(model Model, width, height int) string {
 	innerWidth := max(1, width-2)
-	lines := []string{titleStyle.Render("WORKERS")}
+	if model.destination == HubDestination {
+		lines := []string{
+			titleStyle.Render("FIRSTMATE"),
+			focusStyle.Render("> Firstmate hub"),
+			labelStyle.Render("  primary supervisor"),
+		}
+		return panelStyle(width, height).Render(fitBlock(strings.Join(lines, "\n"), innerWidth, max(1, height-2)))
+	}
+	tasks := model.destinationTasks()
+	title := "MANAGED WORKERS"
+	empty := "No active Firstmate-managed workers."
+	if model.destination == PrivateDestination {
+		title = "PRIVATE CODEX"
+		empty = "No active private Codex threads."
+	}
+	lines := []string{titleStyle.Render(title)}
 	if len(tasks) == 0 {
-		lines = append(lines, labelStyle.Render("No task metadata found."))
+		lines = append(lines, labelStyle.Render(empty))
 	} else {
-		var previous firstmate.Ownership
 		for index, task := range tasks {
-			if index == 0 || task.Ownership != previous {
-				lines = append(lines, ownershipStyle(task.Ownership).Render(string(task.Ownership)))
-				previous = task.Ownership
-			}
 			prefix := "  "
 			style := lipgloss.NewStyle().Foreground(colorInk)
-			if index == selected {
+			if index == model.selected {
 				prefix = "> "
 				style = focusStyle
 			}
@@ -94,10 +121,18 @@ func renderTaskList(tasks []firstmate.Task, selected, width, height int) string 
 
 func renderInspector(model Model, width, height int) string {
 	innerWidth := max(1, width-2)
-	if len(model.tasks) == 0 {
-		return panelStyle(width, height).Render(labelStyle.Render("Select a task when metadata is available."))
+	if model.destination == HubDestination {
+		return renderHubInspector(model, width, height)
 	}
-	task := model.tasks[model.selected]
+	tasks := model.destinationTasks()
+	if len(tasks) == 0 {
+		empty := "No active Firstmate-managed workers."
+		if model.destination == PrivateDestination {
+			empty = "No active private Codex threads."
+		}
+		return panelStyle(width, height).Render(labelStyle.Render(empty))
+	}
+	task := tasks[model.selected]
 	meta := task.Metadata
 	var header []string
 	if width < 76 {
@@ -181,6 +216,10 @@ func renderModeSwitch(mode OutputMode) string {
 }
 
 func renderComposer(model Model, task firstmate.Task, width int) string {
+	return renderComposerWithLabel(model, string(task.Ownership), width)
+}
+
+func renderComposerWithLabel(model Model, label string, width int) string {
 	focus := "i to focus"
 	style := labelStyle
 	if model.composer.Focused() {
@@ -192,10 +231,29 @@ func renderComposer(model Model, task firstmate.Task, width int) string {
 		status = focus
 	}
 	return strings.Join([]string{
-		style.Render("MESSAGE / " + string(task.Ownership)),
+		style.Render("MESSAGE / " + label),
 		fitLines(model.composer.View(), width),
 		fitLines(labelStyle.Render(status), width),
 	}, "\n")
+}
+
+func renderHubInspector(model Model, width, height int) string {
+	innerWidth := max(1, width-2)
+	target := fmt.Sprintf("%s %s", valueOrDash(model.hub.Target.Backend), valueOrDash(model.hub.Target.Target))
+	if model.hub.Err != nil {
+		target = errorStyle.Render("unavailable: " + model.hub.Err.Error())
+	}
+	content := strings.Join([]string{
+		titleStyle.Render("FIRSTMATE HUB"),
+		labelStyle.Render("DESTINATION") + " primary supervisor session",
+		labelStyle.Render("TARGET") + " " + target,
+		"",
+		"Send a message to the active Firstmate supervisor.",
+		"No worker selection is required.",
+		"",
+		renderComposerWithLabel(model, "Firstmate hub", innerWidth),
+	}, "\n")
+	return panelStyle(width, height).Render(fitBlock(content, innerWidth, max(1, height-2)))
 }
 
 func renderReport(task firstmate.Task) string {
@@ -247,16 +305,18 @@ func renderHelp(width, height int) string {
 		"j / down       next task",
 		"k / up         previous task",
 		"g / G          first / last task",
+		"tab / shift-tab next / previous destination",
+		"1 / 2 / 3      Hub / Managed / Private",
 		"left / right   Reports / Live",
 		"enter          switch Reports / Live",
 		"esc            close help or return to Reports",
 		"r              refresh current Firstmate reads",
-		"i              focus selected-worker message composer",
+		"i              focus destination message composer",
 		"enter          send while composer is focused",
 		"?              toggle this help",
 		"q              quit",
 		"",
-		labelStyle.Render("Messages route only to the selected active worker."),
+		labelStyle.Render("Hub messages route to the current primary supervisor."),
 	}
 	modalWidth := min(60, max(32, width-4))
 	modalHeight := min(18, max(10, height-4))
@@ -358,4 +418,14 @@ func valueOrDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func countOwnership(tasks []firstmate.Task, ownership firstmate.Ownership) int {
+	count := 0
+	for _, task := range tasks {
+		if task.Ownership == ownership {
+			count++
+		}
+	}
+	return count
 }

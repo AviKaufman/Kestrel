@@ -23,17 +23,36 @@ const (
 	LiveMode
 )
 
+// Destination selects the top-level navigation context.
+type Destination int
+
+const (
+	HubDestination Destination = iota
+	ManagedDestination
+	PrivateDestination
+)
+
+// HubState records the current primary supervisor destination or its discovery error.
+type HubState struct {
+	Target firstmate.HubTarget
+	Err    error
+}
+
 // Source refreshes read-only Firstmate task and worker output.
 type Source interface {
 	Load(context.Context) ([]firstmate.Task, error)
 	LoadLive(context.Context, firstmate.Task) ([]string, error)
+	LoadHub(context.Context) (firstmate.HubTarget, error)
 	Send(context.Context, firstmate.Task, string) error
+	SendHub(context.Context, firstmate.HubTarget, string) error
 }
 
 // Model is the keyboard-driven root Bubble Tea model.
 type Model struct {
 	home        string
+	hub         HubState
 	tasks       []firstmate.Task
+	destination Destination
 	selected    int
 	outputMode  OutputMode
 	liveTaskID  string
@@ -50,8 +69,10 @@ type Model struct {
 }
 
 type fleetLoadedMsg struct {
-	tasks []firstmate.Task
-	err   error
+	tasks  []firstmate.Task
+	hub    firstmate.HubTarget
+	hubErr error
+	err    error
 }
 
 type liveLoadedMsg struct {
@@ -61,12 +82,12 @@ type liveLoadedMsg struct {
 }
 
 type sendFinishedMsg struct {
-	taskID string
-	draft  string
-	err    error
+	label string
+	draft string
+	err   error
 }
 
-func NewModel(home string, tasks []firstmate.Task, live []string, source Source) Model {
+func NewModel(home string, hub HubState, tasks []firstmate.Task, live []string, source Source) Model {
 	composer := textinput.New()
 	composer.Prompt = "> "
 	composer.Placeholder = "Write a short message to the selected worker"
@@ -75,6 +96,7 @@ func NewModel(home string, tasks []firstmate.Task, live []string, source Source)
 
 	model := Model{
 		home:       home,
+		hub:        hub,
 		tasks:      tasks,
 		liveLines:  live,
 		source:     source,
@@ -108,7 +130,8 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		selectedID := model.selectedID()
 		model.tasks = message.tasks
-		model.selected = indexOfTask(model.tasks, selectedID)
+		model.hub = HubState{Target: message.hub, Err: message.hubErr}
+		model.selected = indexOfTask(model.destinationTasks(), selectedID)
 		if model.selected < 0 {
 			model.selected = 0
 		}
@@ -125,13 +148,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case sendFinishedMsg:
 		model.sending = false
 		if message.err != nil {
-			model.sendStatus = "Send to " + message.taskID + " failed: " + message.err.Error()
+			model.sendStatus = "Send to " + message.label + " failed: " + message.err.Error()
 			return model, nil
 		}
 		if model.composer.Value() == message.draft {
 			model.composer.Reset()
 		}
-		model.sendStatus = "Sent to " + message.taskID
+		model.sendStatus = "Sent to " + message.label
 		return model, nil
 	case tea.KeyPressMsg:
 		if model.composer.Focused() {
@@ -168,6 +191,19 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if model.helpVisible {
 			return model, nil
 		}
+		switch message.String() {
+		case "tab":
+			return model.switchDestination((model.destination + 1) % 3)
+		case "shift+tab":
+			return model.switchDestination((model.destination + 2) % 3)
+		case "1":
+			return model.switchDestination(HubDestination)
+		case "2":
+			return model.switchDestination(ManagedDestination)
+		case "3":
+			return model.switchDestination(PrivateDestination)
+		}
+		destinationTasks := model.destinationTasks()
 		switch {
 		case key.Matches(message, model.keys.Up):
 			if model.selected > 0 {
@@ -175,26 +211,35 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Down):
-			if model.selected+1 < len(model.tasks) {
+			if model.selected+1 < len(destinationTasks) {
 				model.selected++
 				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Top):
-			if len(model.tasks) > 0 {
+			if len(destinationTasks) > 0 {
 				model.selected = 0
 				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Bottom):
-			if len(model.tasks) > 0 {
-				model.selected = len(model.tasks) - 1
+			if len(destinationTasks) > 0 {
+				model.selected = len(destinationTasks) - 1
 				return model, model.loadSelectedLiveIfVisible()
 			}
 		case key.Matches(message, model.keys.Reports):
+			if model.destination == HubDestination {
+				return model, nil
+			}
 			model.outputMode = ReportsMode
 		case key.Matches(message, model.keys.Live):
+			if model.destination == HubDestination {
+				return model, nil
+			}
 			model.outputMode = LiveMode
 			return model, model.loadSelectedLive()
 		case key.Matches(message, model.keys.Toggle):
+			if model.destination == HubDestination {
+				return model, nil
+			}
 			if model.outputMode == ReportsMode {
 				model.outputMode = LiveMode
 				return model, model.loadSelectedLive()
@@ -203,7 +248,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(message, model.keys.Refresh):
 			return model, model.refresh()
 		case key.Matches(message, model.keys.Compose):
-			if len(model.tasks) == 0 {
+			if model.destination != HubDestination && len(destinationTasks) == 0 {
 				model.sendStatus = "No active worker selected."
 				return model, nil
 			}
@@ -245,11 +290,17 @@ func (model Model) SendStatus() string {
 	return model.sendStatus
 }
 
+// Destination returns the active top-level navigation context.
+func (model Model) Destination() Destination {
+	return model.destination
+}
+
 func (model Model) selectedID() string {
-	if model.selected < 0 || model.selected >= len(model.tasks) {
+	tasks := model.destinationTasks()
+	if model.selected < 0 || model.selected >= len(tasks) {
 		return ""
 	}
-	return model.tasks[model.selected].Metadata.ID
+	return tasks[model.selected].Metadata.ID
 }
 
 func (model Model) refresh() tea.Cmd {
@@ -260,7 +311,11 @@ func (model Model) refresh() tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
 		defer cancel()
 		tasks, err := model.source.Load(ctx)
-		return fleetLoadedMsg{tasks: tasks, err: err}
+		if err != nil {
+			return fleetLoadedMsg{err: err}
+		}
+		hub, hubErr := model.source.LoadHub(ctx)
+		return fleetLoadedMsg{tasks: tasks, hub: hub, hubErr: hubErr}
 	}
 }
 
@@ -290,11 +345,6 @@ func (model *Model) sendDraft() tea.Cmd {
 		model.sendStatus = "Send already in progress."
 		return nil
 	}
-	task, found := model.selectedTask()
-	if !found {
-		model.sendStatus = "No active worker selected."
-		return nil
-	}
 	draft := model.composer.Value()
 	if len(strings.TrimSpace(draft)) == 0 {
 		model.sendStatus = "Message must not be empty."
@@ -310,11 +360,31 @@ func (model *Model) sendDraft() tea.Cmd {
 	}
 	model.sending = true
 	model.sendStatus = "Sending..."
+	if model.destination == HubDestination {
+		target := model.hub.Target
+		if model.hub.Err != nil {
+			model.sending = false
+			model.sendStatus = "Firstmate hub unavailable: " + model.hub.Err.Error()
+			return nil
+		}
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
+			defer cancel()
+			err := model.source.SendHub(ctx, target, draft)
+			return sendFinishedMsg{label: "Firstmate hub", draft: draft, err: err}
+		}
+	}
+	task, found := model.selectedTask()
+	if !found {
+		model.sending = false
+		model.sendStatus = "No active worker selected."
+		return nil
+	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
 		defer cancel()
 		err := model.source.Send(ctx, task, draft)
-		return sendFinishedMsg{taskID: task.Metadata.ID, draft: draft, err: err}
+		return sendFinishedMsg{label: task.Metadata.ID, draft: draft, err: err}
 	}
 }
 
@@ -331,8 +401,37 @@ func indexOfTask(tasks []firstmate.Task, taskID string) int {
 }
 
 func (model Model) selectedTask() (firstmate.Task, bool) {
-	if model.selected < 0 || model.selected >= len(model.tasks) {
+	tasks := model.destinationTasks()
+	if model.selected < 0 || model.selected >= len(tasks) {
 		return firstmate.Task{}, false
 	}
-	return model.tasks[model.selected], true
+	return tasks[model.selected], true
+}
+
+func (model Model) destinationTasks() []firstmate.Task {
+	var ownership firstmate.Ownership
+	switch model.destination {
+	case ManagedDestination:
+		ownership = firstmate.FirstmateManaged
+	case PrivateDestination:
+		ownership = firstmate.CaptainPrivate
+	default:
+		return nil
+	}
+	tasks := make([]firstmate.Task, 0, len(model.tasks))
+	for _, task := range model.tasks {
+		if task.Ownership == ownership {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks
+}
+
+func (model Model) switchDestination(destination Destination) (tea.Model, tea.Cmd) {
+	model.destination = destination
+	model.selected = 0
+	model.outputMode = ReportsMode
+	model.sendStatus = ""
+	model.composer.Blur()
+	return model, model.loadSelectedLiveIfVisible()
 }

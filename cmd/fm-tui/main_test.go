@@ -16,6 +16,7 @@ func TestRunSnapshotAgainstFakeHomeAndInjectedAdapters(t *testing.T) {
 	agentAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-tui-agent-state.sh")
 	directAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-tui-direct.sh")
 	sendAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-send.sh")
+	hubAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-tui-hub.sh")
 
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{
@@ -27,12 +28,15 @@ func TestRunSnapshotAgainstFakeHomeAndInjectedAdapters(t *testing.T) {
 		"--peek", peekAdapter,
 		"--direct", directAdapter,
 		"--send", sendAdapter,
+		"--hub", hubAdapter,
 	}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("run() exit = %d, stderr = %q", exitCode, stderr.String())
 	}
 	for _, expected := range []string{
 		"FIRSTMATE TUI SNAPSHOT",
+		"hub: tmux %1",
+		"destination: Firstmate hub",
 		"task id: demo",
 		"current state: working",
 		"current source: pane",

@@ -8,10 +8,16 @@ import (
 )
 
 // RenderSnapshot emits an ANSI-free, stable review and test surface.
-func RenderSnapshot(home string, tasks []firstmate.Task, live []string) string {
+func RenderSnapshot(home string, hub HubState, tasks []firstmate.Task, live []string) string {
 	var output strings.Builder
 	fmt.Fprintln(&output, "FIRSTMATE TUI SNAPSHOT")
 	fmt.Fprintf(&output, "home: %s\n", home)
+	fmt.Fprintln(&output, "destination: Firstmate hub")
+	if hub.Err != nil {
+		fmt.Fprintf(&output, "hub: unavailable: %s\n", hub.Err)
+	} else {
+		fmt.Fprintf(&output, "hub: %s %s\n", valueOrDash(hub.Target.Backend), valueOrDash(hub.Target.Target))
+	}
 	fmt.Fprintf(&output, "tasks: %d\n", len(tasks))
 	fmt.Fprintln(&output)
 	fmt.Fprintln(&output, "TASKS")

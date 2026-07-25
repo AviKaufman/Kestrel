@@ -14,8 +14,10 @@ import (
 )
 
 type fakeSource struct {
-	tasks []firstmate.Task
-	live  []string
+	tasks  []firstmate.Task
+	live   []string
+	hub    firstmate.HubTarget
+	hubErr error
 }
 
 type deadlineCheckingSource struct{}
@@ -41,6 +43,20 @@ func (deadlineCheckingSource) Send(ctx context.Context, _ firstmate.Task, _ stri
 	return nil
 }
 
+func (deadlineCheckingSource) LoadHub(ctx context.Context) (firstmate.HubTarget, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return firstmate.HubTarget{}, errors.New("missing deadline")
+	}
+	return availableHub().Target, nil
+}
+
+func (deadlineCheckingSource) SendHub(ctx context.Context, _ firstmate.HubTarget, _ string) error {
+	if _, ok := ctx.Deadline(); !ok {
+		return errors.New("missing deadline")
+	}
+	return nil
+}
+
 func (source fakeSource) Load(context.Context) ([]firstmate.Task, error) {
 	return source.tasks, nil
 }
@@ -53,11 +69,20 @@ func (source fakeSource) Send(context.Context, firstmate.Task, string) error {
 	return nil
 }
 
+func (source fakeSource) LoadHub(context.Context) (firstmate.HubTarget, error) {
+	return source.hub, source.hubErr
+}
+
+func (source fakeSource) SendHub(context.Context, firstmate.HubTarget, string) error {
+	return nil
+}
+
 type composerSource struct {
 	fakeSource
 	sentTask    firstmate.Task
 	sentMessage string
 	sendErr     error
+	sentHub     firstmate.HubTarget
 }
 
 func (source *composerSource) Send(ctx context.Context, task firstmate.Task, message string) error {
@@ -69,9 +94,97 @@ func (source *composerSource) Send(ctx context.Context, task firstmate.Task, mes
 	return source.sendErr
 }
 
+func (source *composerSource) SendHub(ctx context.Context, target firstmate.HubTarget, message string) error {
+	if _, ok := ctx.Deadline(); !ok {
+		return errors.New("missing deadline")
+	}
+	source.sentHub = target
+	source.sentMessage = message
+	return source.sendErr
+}
+
+func availableHub() HubState {
+	return HubState{Target: firstmate.HubTarget{Backend: "tmux", Target: "%9"}}
+}
+
+func TestDestinationsKeepHubPersistentAndWorkersSeparated(t *testing.T) {
+	tasks := sampleTasks()
+	model := NewModel("/fake/home", availableHub(), tasks, nil, fakeSource{tasks: tasks})
+	if model.Destination() != HubDestination {
+		t.Fatalf("initial destination = %v, want hub", model.Destination())
+	}
+	content := ansi.Strip(model.View().Content)
+	if !strings.Contains(content, "Firstmate hub") || !strings.Contains(content, "MESSAGE / Firstmate hub") {
+		t.Fatalf("hub is not persistent:\n%s", content)
+	}
+
+	model = updateModel(t, model, specialKey(tea.KeyTab))
+	if model.Destination() != ManagedDestination || model.Selected() != 0 {
+		t.Fatalf("tab destination=%v selected=%d", model.Destination(), model.Selected())
+	}
+	if task, found := model.selectedTask(); !found || task.Ownership != firstmate.FirstmateManaged {
+		t.Fatalf("managed selection = %#v, %v", task, found)
+	}
+	model = updateModel(t, model, specialKey(tea.KeyTab))
+	if model.Destination() != PrivateDestination {
+		t.Fatalf("second tab destination = %v", model.Destination())
+	}
+	if task, found := model.selectedTask(); !found || task.Ownership != firstmate.CaptainPrivate {
+		t.Fatalf("private selection = %#v, %v", task, found)
+	}
+	model = updateModel(t, model, shiftTabKey())
+	if model.Destination() != ManagedDestination {
+		t.Fatalf("shift-tab destination = %v", model.Destination())
+	}
+	model = updateModel(t, model, keyPress("1"))
+	if model.Destination() != HubDestination {
+		t.Fatalf("1 destination = %v", model.Destination())
+	}
+}
+
+func TestZeroWorkerDestinationsStayExplicitWithoutHidingHub(t *testing.T) {
+	model := NewModel("/fake/home", availableHub(), nil, nil, fakeSource{})
+	hub := ansi.Strip(model.View().Content)
+	if !strings.Contains(hub, "Firstmate hub") || !strings.Contains(hub, "workers 0") {
+		t.Fatalf("zero-worker hub missing:\n%s", hub)
+	}
+	model = updateModel(t, model, keyPress("2"))
+	if !strings.Contains(ansi.Strip(model.View().Content), "No active Firstmate-managed workers.") {
+		t.Fatalf("managed empty state missing:\n%s", model.View().Content)
+	}
+	model = updateModel(t, model, keyPress("3"))
+	if !strings.Contains(ansi.Strip(model.View().Content), "No active private Codex threads.") {
+		t.Fatalf("private empty state missing:\n%s", model.View().Content)
+	}
+}
+
+func TestHubComposerSendsWithZeroWorkersAndRetainsFailureDraft(t *testing.T) {
+	source := &composerSource{
+		fakeSource: fakeSource{hub: availableHub().Target},
+		sendErr:    errors.New("supervisor moved"),
+	}
+	model := NewModel("/fake/home", availableHub(), nil, nil, source)
+	model = updateModel(t, model, keyPress("i"))
+	model = updateModel(t, model, keyPress("hello hub"))
+	updated, command := model.Update(specialKey(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("hub enter returned nil send command")
+	}
+	model = updated.(Model)
+	model = updateModel(t, model, command())
+	if source.sentHub != availableHub().Target || source.sentMessage != "hello hub" {
+		t.Fatalf("hub send target=%#v message=%q", source.sentHub, source.sentMessage)
+	}
+	if model.Draft() != "hello hub" || !strings.Contains(model.SendStatus(), "supervisor moved") {
+		t.Fatalf("hub failure draft=%q status=%q", model.Draft(), model.SendStatus())
+	}
+}
+
 func TestModelKeyboardNavigationAndOutputSwitch(t *testing.T) {
 	tasks := sampleTasks()
-	model := NewModel("/fake/home", tasks, []string{"live alpha"}, fakeSource{tasks: tasks, live: []string{"live beta"}})
+	tasks[1].Ownership = firstmate.FirstmateManaged
+	model := NewModel("/fake/home", availableHub(), tasks, []string{"live alpha"}, fakeSource{tasks: tasks, live: []string{"live beta"}})
+	model = updateModel(t, model, keyPress("2"))
 	model = updateModel(t, model, keyPress("j"))
 	if model.Selected() != 1 {
 		t.Fatalf("j selected = %d, want 1", model.Selected())
@@ -101,7 +214,8 @@ func TestModelKeyboardNavigationAndOutputSwitch(t *testing.T) {
 
 func TestReportsNavigationDoesNotReadLiveWorkerOutput(t *testing.T) {
 	tasks := sampleTasks()
-	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
+	model := NewModel("/fake/home", availableHub(), tasks, nil, fakeSource{tasks: tasks})
+	model = updateModel(t, model, keyPress("2"))
 
 	_, command := model.Update(keyPress("j"))
 	if command != nil {
@@ -110,7 +224,8 @@ func TestReportsNavigationDoesNotReadLiveWorkerOutput(t *testing.T) {
 }
 
 func TestInteractiveAdapterCommandsCarryDeadlines(t *testing.T) {
-	model := NewModel("/fake/home", sampleTasks(), nil, deadlineCheckingSource{})
+	model := NewModel("/fake/home", availableHub(), sampleTasks(), nil, deadlineCheckingSource{})
+	model = updateModel(t, model, keyPress("2"))
 
 	updated, command := model.Update(specialKey(tea.KeyRight))
 	if command == nil {
@@ -139,7 +254,7 @@ func TestInteractiveAdapterCommandsCarryDeadlines(t *testing.T) {
 
 func TestModelHelpRefreshAndQuitKeys(t *testing.T) {
 	tasks := sampleTasks()
-	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
+	model := NewModel("/fake/home", availableHub(), tasks, nil, fakeSource{tasks: tasks})
 
 	if strings.Contains(ansi.Strip(model.View().Content), "KEYBOARD HELP") ||
 		strings.Contains(ansi.Strip(model.View().Content), "k/up previous") {
@@ -175,7 +290,7 @@ func TestModelHelpRefreshAndQuitKeys(t *testing.T) {
 }
 
 func TestHelpModalOverlaysWithoutChangingFrameGeometry(t *testing.T) {
-	model := NewModel("/fake/home", sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
+	model := NewModel("/fake/home", availableHub(), sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 92, Height: 26})
 	base := model.View().Content
 	model = updateModel(t, model, keyPress("?"))
@@ -199,7 +314,7 @@ func TestHelpModalOverlaysWithoutChangingFrameGeometry(t *testing.T) {
 }
 
 func TestMainGeometryIsFlushBelowCompactHeader(t *testing.T) {
-	model := NewModel("/fake/home", sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
+	model := NewModel("/fake/home", availableHub(), sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 28})
 	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
 
@@ -220,10 +335,10 @@ func TestMainGeometryIsFlushBelowCompactHeader(t *testing.T) {
 func TestComposerFocusBlocksNavigationAndRoutesSelectedWorker(t *testing.T) {
 	tasks := sampleTasks()
 	source := &composerSource{fakeSource: fakeSource{tasks: tasks}}
-	model := NewModel("/fake/home", tasks, nil, source)
+	model := NewModel("/fake/home", availableHub(), tasks, nil, source)
 
-	model = updateModel(t, model, keyPress("j"))
-	if model.Selected() != 1 {
+	model = updateModel(t, model, keyPress("3"))
+	if model.Selected() != 0 {
 		t.Fatalf("selected = %d, want private worker", model.Selected())
 	}
 	model = updateModel(t, model, keyPress("i"))
@@ -231,7 +346,7 @@ func TestComposerFocusBlocksNavigationAndRoutesSelectedWorker(t *testing.T) {
 		t.Fatal("i did not focus composer")
 	}
 	model = updateModel(t, model, keyPress("k"))
-	if model.Selected() != 1 || model.Draft() != "k" {
+	if model.Selected() != 0 || model.Draft() != "k" {
 		t.Fatalf("focused k changed selection or missed input: selected=%d draft=%q", model.Selected(), model.Draft())
 	}
 	model = updateModel(t, model, keyPress(" hello"))
@@ -263,7 +378,8 @@ func TestComposerKeepsDraftOnValidationAndAdapterFailure(t *testing.T) {
 		fakeSource: fakeSource{tasks: tasks},
 		sendErr:    errors.New("adapter refused target"),
 	}
-	model := NewModel("/fake/home", tasks, nil, source)
+	model := NewModel("/fake/home", availableHub(), tasks, nil, source)
+	model = updateModel(t, model, keyPress("2"))
 	model = updateModel(t, model, keyPress("i"))
 
 	_, command := model.Update(specialKey(tea.KeyEnter))
@@ -297,7 +413,8 @@ func TestComposerKeepsDraftOnValidationAndAdapterFailure(t *testing.T) {
 func TestComposerSendCompletionSettlesAfterSelectedWorkerDisappears(t *testing.T) {
 	tasks := sampleTasks()
 	source := &composerSource{fakeSource: fakeSource{tasks: tasks}}
-	model := NewModel("/fake/home", tasks, nil, source)
+	model := NewModel("/fake/home", availableHub(), tasks, nil, source)
+	model = updateModel(t, model, keyPress("2"))
 	model = updateModel(t, model, keyPress("i"))
 	model = updateModel(t, model, keyPress("already sent"))
 
@@ -319,7 +436,8 @@ func TestComposerSendCompletionSettlesAfterSelectedWorkerDisappears(t *testing.T
 
 func TestComposerViewIsVisibleAndOwnershipSpecific(t *testing.T) {
 	tasks := sampleTasks()
-	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
+	model := NewModel("/fake/home", availableHub(), tasks, nil, fakeSource{tasks: tasks})
+	model = updateModel(t, model, keyPress("2"))
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 110, Height: 34})
 	content := ansi.Strip(model.View().Content)
 	for _, expected := range []string{"MESSAGE / Firstmate managed", "i to focus", "REPORTS", "LIVE"} {
@@ -331,7 +449,8 @@ func TestComposerViewIsVisibleAndOwnershipSpecific(t *testing.T) {
 
 func TestPrivateReportsStateHasExplicitAbsence(t *testing.T) {
 	tasks := sampleTasks()[1:]
-	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
+	model := NewModel("/fake/home", availableHub(), tasks, nil, fakeSource{tasks: tasks})
+	model = updateModel(t, model, keyPress("3"))
 	content := ansi.Strip(model.View().Content)
 	if !strings.Contains(content, "Direct Codex sessions have no durable Firstmate report") {
 		t.Fatalf("private report absence is not explicit:\n%s", content)
@@ -340,7 +459,8 @@ func TestPrivateReportsStateHasExplicitAbsence(t *testing.T) {
 
 func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 	tasks := sampleTasks()
-	model := NewModel("/fake/home", tasks, []string{"bounded worker line"}, fakeSource{tasks: tasks})
+	model := NewModel("/fake/home", availableHub(), tasks, []string{"bounded worker line"}, fakeSource{tasks: tasks})
+	model = updateModel(t, model, keyPress("2"))
 	model = updateModel(t, model, tea.WindowSizeMsg{Width: 64, Height: 24})
 	content := model.View().Content
 
@@ -369,7 +489,8 @@ func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 
 func TestModelLiveViewLabelsEventsAsHistory(t *testing.T) {
 	tasks := sampleTasks()
-	model := NewModel("/fake/home", tasks, []string{"bounded worker line"}, fakeSource{tasks: tasks})
+	model := NewModel("/fake/home", availableHub(), tasks, []string{"bounded worker line"}, fakeSource{tasks: tasks})
+	model = updateModel(t, model, keyPress("2"))
 	model = updateModel(t, model, specialKey(tea.KeyRight))
 	content := model.View().Content
 	if !strings.Contains(content, "STATUS EVENT HISTORY") || !strings.Contains(content, "not current-state truth") {
@@ -420,6 +541,10 @@ func keyPress(text string) tea.KeyPressMsg {
 
 func specialKey(code rune) tea.KeyPressMsg {
 	return tea.KeyPressMsg(tea.Key{Code: code})
+}
+
+func shiftTabKey() tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: tea.KeyTab, Mod: tea.ModShift})
 }
 
 func updateModel(t *testing.T, model Model, message tea.Msg) Model {
