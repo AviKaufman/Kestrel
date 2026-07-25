@@ -12,6 +12,7 @@ type keyMap struct {
 	Toggle  key.Binding
 	Back    key.Binding
 	Refresh key.Binding
+	Compose key.Binding
 	Help    key.Binding
 	Quit    key.Binding
 }
@@ -54,6 +55,10 @@ func defaultKeys() keyMap {
 			key.WithKeys("r"),
 			key.WithHelp("r", "refresh"),
 		),
+		Compose: key.NewBinding(
+			key.WithKeys("i"),
+			key.WithHelp("i", "message"),
+		),
 		Help: key.NewBinding(
 			key.WithKeys("?"),
 			key.WithHelp("?", "keys"),
@@ -66,13 +71,13 @@ func defaultKeys() keyMap {
 }
 
 func (keys keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{keys.Up, keys.Down, keys.Toggle, keys.Refresh, keys.Help, keys.Quit}
+	return []key.Binding{keys.Up, keys.Down, keys.Toggle, keys.Compose, keys.Refresh, keys.Help, keys.Quit}
 }
 
 func (keys keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{keys.Up, keys.Down, keys.Top, keys.Bottom},
 		{keys.Reports, keys.Live, keys.Toggle, keys.Back},
-		{keys.Refresh, keys.Help, keys.Quit},
+		{keys.Compose, keys.Refresh, keys.Help, keys.Quit},
 	}
 }

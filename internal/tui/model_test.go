@@ -34,12 +34,39 @@ func (deadlineCheckingSource) LoadLive(ctx context.Context, _ firstmate.Task) ([
 	return []string{"bounded"}, nil
 }
 
+func (deadlineCheckingSource) Send(ctx context.Context, _ firstmate.Task, _ string) error {
+	if _, ok := ctx.Deadline(); !ok {
+		return errors.New("missing deadline")
+	}
+	return nil
+}
+
 func (source fakeSource) Load(context.Context) ([]firstmate.Task, error) {
 	return source.tasks, nil
 }
 
 func (source fakeSource) LoadLive(context.Context, firstmate.Task) ([]string, error) {
 	return source.live, nil
+}
+
+func (source fakeSource) Send(context.Context, firstmate.Task, string) error {
+	return nil
+}
+
+type composerSource struct {
+	fakeSource
+	sentTask    firstmate.Task
+	sentMessage string
+	sendErr     error
+}
+
+func (source *composerSource) Send(ctx context.Context, task firstmate.Task, message string) error {
+	if _, ok := ctx.Deadline(); !ok {
+		return errors.New("missing deadline")
+	}
+	source.sentTask = task
+	source.sentMessage = message
+	return source.sendErr
 }
 
 func TestModelKeyboardNavigationAndOutputSwitch(t *testing.T) {
@@ -130,6 +157,95 @@ func TestModelHelpRefreshAndQuitKeys(t *testing.T) {
 	_, quit := model.Update(keyPress("q"))
 	if quit == nil {
 		t.Fatal("q returned nil quit command")
+	}
+}
+
+func TestComposerFocusBlocksNavigationAndRoutesSelectedWorker(t *testing.T) {
+	tasks := sampleTasks()
+	source := &composerSource{fakeSource: fakeSource{tasks: tasks}}
+	model := NewModel("/fake/home", tasks, nil, source)
+
+	model = updateModel(t, model, keyPress("j"))
+	if model.Selected() != 1 {
+		t.Fatalf("selected = %d, want private worker", model.Selected())
+	}
+	model = updateModel(t, model, keyPress("i"))
+	if !model.ComposerFocused() {
+		t.Fatal("i did not focus composer")
+	}
+	model = updateModel(t, model, keyPress("k"))
+	if model.Selected() != 1 || model.Draft() != "k" {
+		t.Fatalf("focused k changed selection or missed input: selected=%d draft=%q", model.Selected(), model.Draft())
+	}
+	model = updateModel(t, model, keyPress(" hello"))
+
+	updated, command := model.Update(specialKey(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("enter returned nil send command")
+	}
+	message, ok := command().(sendFinishedMsg)
+	if !ok {
+		t.Fatalf("send command returned %T", message)
+	}
+	model = updated.(Model)
+	model = updateModel(t, model, message)
+	if source.sentTask.Ownership != firstmate.CaptainPrivate || source.sentTask.Target != "private:beta.0" {
+		t.Fatalf("sent task = %#v", source.sentTask)
+	}
+	if source.sentMessage != "k hello" {
+		t.Fatalf("sent message = %q", source.sentMessage)
+	}
+	if model.Draft() != "" || !strings.Contains(model.SendStatus(), "Sent") {
+		t.Fatalf("success draft=%q status=%q", model.Draft(), model.SendStatus())
+	}
+}
+
+func TestComposerKeepsDraftOnValidationAndAdapterFailure(t *testing.T) {
+	tasks := sampleTasks()
+	source := &composerSource{
+		fakeSource: fakeSource{tasks: tasks},
+		sendErr:    errors.New("adapter refused target"),
+	}
+	model := NewModel("/fake/home", tasks, nil, source)
+	model = updateModel(t, model, keyPress("i"))
+
+	_, command := model.Update(specialKey(tea.KeyEnter))
+	if command != nil {
+		t.Fatal("empty draft returned a send command")
+	}
+	model = updateModel(t, model, specialKey(tea.KeyEnter))
+	if !strings.Contains(model.SendStatus(), "empty") {
+		t.Fatalf("empty status = %q", model.SendStatus())
+	}
+
+	model = updateModel(t, model, keyPress("retry this"))
+	updated, command := model.Update(specialKey(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("non-empty draft returned nil command")
+	}
+	model = updated.(Model)
+	model = updateModel(t, model, command())
+	if model.Draft() != "retry this" {
+		t.Fatalf("failure cleared draft: %q", model.Draft())
+	}
+	if !strings.Contains(model.SendStatus(), "adapter refused target") {
+		t.Fatalf("failure status = %q", model.SendStatus())
+	}
+	model = updateModel(t, model, specialKey(tea.KeyEscape))
+	if model.ComposerFocused() || model.Draft() != "retry this" {
+		t.Fatalf("esc focus=%v draft=%q", model.ComposerFocused(), model.Draft())
+	}
+}
+
+func TestComposerViewIsVisibleAndOwnershipSpecific(t *testing.T) {
+	tasks := sampleTasks()
+	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 110, Height: 34})
+	content := ansi.Strip(model.View().Content)
+	for _, expected := range []string{"MESSAGE / Firstmate managed", "i to focus", "REPORTS", "LIVE"} {
+		if !strings.Contains(content, expected) {
+			t.Fatalf("composer view missing %q:\n%s", expected, content)
+		}
 	}
 }
 

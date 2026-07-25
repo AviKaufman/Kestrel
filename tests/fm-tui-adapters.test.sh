@@ -89,6 +89,9 @@ capture=$(env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" peek private:notes
 if env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" peek fleet:fm-managed.0 20 >/dev/null 2>&1; then
   fail "direct adapter accepted a Firstmate-managed pane"
 fi
+if env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" peek private:notes.bad 20 >/dev/null 2>&1; then
+  fail "direct adapter accepted an invalid target grammar"
+fi
 
 message='literal $HOME; $(touch /tmp/must-not-run)'
 sent=$(env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" send private:notes.0 "$message")

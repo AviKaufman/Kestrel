@@ -15,6 +15,7 @@ func TestRunSnapshotAgainstFakeHomeAndInjectedAdapters(t *testing.T) {
 	peekAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-peek.sh")
 	agentAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-tui-agent-state.sh")
 	directAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-tui-direct.sh")
+	sendAdapter := filepath.Join(root, "tests", "fixtures", "tui-bin", "fm-send.sh")
 
 	var stdout, stderr bytes.Buffer
 	exitCode := run([]string{
@@ -25,6 +26,7 @@ func TestRunSnapshotAgainstFakeHomeAndInjectedAdapters(t *testing.T) {
 		"--agent-state", agentAdapter,
 		"--peek", peekAdapter,
 		"--direct", directAdapter,
+		"--send", sendAdapter,
 	}, &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("run() exit = %d, stderr = %q", exitCode, stderr.String())

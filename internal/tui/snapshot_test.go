@@ -29,6 +29,8 @@ func TestRenderSnapshotIsStableAndComplete(t *testing.T) {
 		"effort: high",
 		"worktree: /worktrees/alpha",
 		"window: firstmate:fm-alpha",
+		"COMPOSER",
+		"send route: Firstmate managed via fm-send.sh",
 		"REPORTS",
 		"# Alpha report",
 		"STATUS EVENT HISTORY (bounded; not current-state truth)",

@@ -113,6 +113,34 @@ type ShellDirectSessionSource struct {
 	ExtraEnv []string
 }
 
+// ShellMessageSender executes one adapter with target and message as separate
+// arguments, optionally after a fixed adapter subcommand.
+type ShellMessageSender struct {
+	Path       string
+	Home       Home
+	PrefixArgs []string
+	ExtraEnv   []string
+}
+
+func (sender ShellMessageSender) Send(ctx context.Context, target, message string) error {
+	args := make([]string, 0, len(sender.PrefixArgs)+2)
+	args = append(args, sender.PrefixArgs...)
+	args = append(args, target, message)
+	_, stderr, truncated, err := runBounded(
+		ctx,
+		sender.Path,
+		args,
+		adapterEnvironment(sender.Home, sender.ExtraEnv),
+	)
+	if err != nil {
+		return fmt.Errorf("send to %s: %w: %s", target, err, strings.TrimSpace(stderr))
+	}
+	if truncated {
+		return fmt.Errorf("send to %s: adapter output exceeded %d bytes", target, adapterOutputLimit)
+	}
+	return nil
+}
+
 func (source ShellDirectSessionSource) Discover(ctx context.Context, _ []Metadata) ([]DirectSession, error) {
 	stdout, stderr, truncated, err := runBounded(
 		ctx,

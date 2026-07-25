@@ -24,6 +24,7 @@ type options struct {
 	agentPath  string
 	peekPath   string
 	directPath string
+	sendPath   string
 	snapshot   bool
 	statusRows int
 	liveRows   int
@@ -43,6 +44,7 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 	flags.StringVar(&options.agentPath, "agent-state", "", "path to fm-tui-agent-state.sh")
 	flags.StringVar(&options.peekPath, "peek", "", "path to fm-peek.sh")
 	flags.StringVar(&options.directPath, "direct", "", "path to fm-tui-direct.sh")
+	flags.StringVar(&options.sendPath, "send", "", "path to fm-send.sh")
 	flags.BoolVar(&options.snapshot, "snapshot", false, "print deterministic non-interactive output")
 	flags.IntVar(&options.statusRows, "status-lines", 20, "maximum status events per task")
 	flags.IntVar(&options.liveRows, "live-lines", 40, "maximum captured worker lines")
@@ -92,6 +94,11 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "fm-tui: direct-session adapter: %v\n", err)
 		return 1
 	}
+	sendPath, err := resolveAdapter(options.sendPath, filepath.Join(root, "bin", "fm-send.sh"))
+	if err != nil {
+		fmt.Fprintf(stderr, "fm-tui: managed-send adapter: %v\n", err)
+		return 1
+	}
 
 	loader := firstmate.Loader{
 		Home: home,
@@ -112,6 +119,15 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 			Path:  directPath,
 			Home:  home,
 			Lines: options.liveRows,
+		},
+		ManagedSend: firstmate.ShellMessageSender{
+			Path: sendPath,
+			Home: home,
+		},
+		DirectSend: firstmate.ShellMessageSender{
+			Path:       directPath,
+			Home:       home,
+			PrefixArgs: []string{"send"},
 		},
 		StatusMaxLines: options.statusRows,
 		StatusMaxBytes: 64 * 1024,

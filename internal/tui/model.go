@@ -2,10 +2,13 @@ package tui
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -26,6 +29,7 @@ const (
 type Source interface {
 	Load(context.Context) ([]firstmate.Task, error)
 	LoadLive(context.Context, firstmate.Task) ([]string, error)
+	Send(context.Context, firstmate.Task, string) error
 }
 
 // Model is the keyboard-driven root Bubble Tea model.
@@ -43,6 +47,9 @@ type Model struct {
 	err         error
 	keys        keyMap
 	help        help.Model
+	composer    textinput.Model
+	sendStatus  string
+	sending     bool
 }
 
 type fleetLoadedMsg struct {
@@ -56,6 +63,12 @@ type liveLoadedMsg struct {
 	err    error
 }
 
+type sendFinishedMsg struct {
+	taskID string
+	draft  string
+	err    error
+}
+
 func NewModel(home string, tasks []firstmate.Task, live []string, source Source) Model {
 	helpModel := help.New()
 	helpModel.Styles.ShortKey = lipgloss.NewStyle().Foreground(colorGold)
@@ -64,6 +77,11 @@ func NewModel(home string, tasks []firstmate.Task, live []string, source Source)
 	helpModel.Styles.FullKey = helpModel.Styles.ShortKey
 	helpModel.Styles.FullDesc = helpModel.Styles.ShortDesc
 	helpModel.Styles.FullSeparator = helpModel.Styles.ShortSeparator
+	composer := textinput.New()
+	composer.Prompt = "> "
+	composer.Placeholder = "Write a short message to the selected worker"
+	composer.CharLimit = firstmate.MaxMessageBytes
+	composer.SetWidth(60)
 
 	model := Model{
 		home:       home,
@@ -75,6 +93,7 @@ func NewModel(home string, tasks []firstmate.Task, live []string, source Source)
 		keys:       defaultKeys(),
 		help:       helpModel,
 		outputMode: ReportsMode,
+		composer:   composer,
 	}
 	if len(tasks) > 0 {
 		model.liveTaskID = tasks[0].Metadata.ID
@@ -92,6 +111,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.width = max(40, message.Width)
 		model.height = max(16, message.Height)
 		model.help.SetWidth(model.width - 2)
+		model.composer.SetWidth(max(16, model.width-model.width/4-8))
 		return model, nil
 	case fleetLoadedMsg:
 		if message.err != nil {
@@ -114,7 +134,37 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.liveLines = message.lines
 		model.err = message.err
 		return model, nil
+	case sendFinishedMsg:
+		if message.taskID != model.selectedID() {
+			return model, nil
+		}
+		model.sending = false
+		if message.err != nil {
+			model.sendStatus = "Send failed: " + message.err.Error()
+			return model, nil
+		}
+		if model.composer.Value() == message.draft {
+			model.composer.Reset()
+		}
+		model.sendStatus = "Sent to " + message.taskID
+		return model, nil
 	case tea.KeyPressMsg:
+		if model.composer.Focused() {
+			switch message.String() {
+			case "ctrl+c":
+				return model, tea.Quit
+			case "esc":
+				model.composer.Blur()
+				model.sendStatus = ""
+				return model, nil
+			case "enter":
+				return model, model.sendDraft()
+			default:
+				var command tea.Cmd
+				model.composer, command = model.composer.Update(message)
+				return model, command
+			}
+		}
 		if key.Matches(message, model.keys.Quit) {
 			return model, tea.Quit
 		}
@@ -169,6 +219,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.outputMode = ReportsMode
 		case key.Matches(message, model.keys.Refresh):
 			return model, model.refresh()
+		case key.Matches(message, model.keys.Compose):
+			if len(model.tasks) == 0 {
+				model.sendStatus = "No active worker selected."
+				return model, nil
+			}
+			model.sendStatus = ""
+			return model, model.composer.Focus()
 		}
 	}
 	return model, nil
@@ -191,6 +248,18 @@ func (model Model) OutputMode() OutputMode {
 
 func (model Model) HelpVisible() bool {
 	return model.helpVisible
+}
+
+func (model Model) ComposerFocused() bool {
+	return model.composer.Focused()
+}
+
+func (model Model) Draft() string {
+	return model.composer.Value()
+}
+
+func (model Model) SendStatus() string {
+	return model.sendStatus
 }
 
 func (model Model) selectedID() string {
@@ -231,6 +300,39 @@ func (model Model) loadSelectedLiveIfVisible() tea.Cmd {
 		return nil
 	}
 	return model.loadSelectedLive()
+}
+
+func (model *Model) sendDraft() tea.Cmd {
+	if model.sending {
+		model.sendStatus = "Send already in progress."
+		return nil
+	}
+	task, found := model.selectedTask()
+	if !found {
+		model.sendStatus = "No active worker selected."
+		return nil
+	}
+	draft := model.composer.Value()
+	if len(strings.TrimSpace(draft)) == 0 {
+		model.sendStatus = "Message must not be empty."
+		return nil
+	}
+	if len([]byte(draft)) > firstmate.MaxMessageBytes {
+		model.sendStatus = fmt.Sprintf("Message exceeds %d-byte limit.", firstmate.MaxMessageBytes)
+		return nil
+	}
+	if model.source == nil {
+		model.sendStatus = "Send source is unavailable."
+		return nil
+	}
+	model.sending = true
+	model.sendStatus = "Sending..."
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
+		defer cancel()
+		err := model.source.Send(ctx, task, draft)
+		return sendFinishedMsg{taskID: task.Metadata.ID, draft: draft, err: err}
+	}
 }
 
 func indexOfTask(tasks []firstmate.Task, taskID string) int {

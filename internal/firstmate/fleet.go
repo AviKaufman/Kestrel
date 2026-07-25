@@ -49,6 +49,8 @@ type Loader struct {
 	Agents         AgentStateResolver
 	Live           LiveReader
 	Direct         DirectSessionSource
+	ManagedSend    MessageSender
+	DirectSend     MessageSender
 	StatusMaxLines int
 	StatusMaxBytes int
 	ReportMaxBytes int

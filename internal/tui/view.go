@@ -134,8 +134,11 @@ func renderInspector(model Model, width, height int) string {
 		}
 		output = renderLive(task, live)
 	}
-	content := strings.Join(header, "\n") + "\n\n" + output
-	content = ansi.Hardwrap(content, innerWidth, false)
+	headerContent := ansi.Hardwrap(strings.Join(header, "\n"), innerWidth, false)
+	composer := renderComposer(model, task, innerWidth)
+	availableOutputHeight := max(3, height-2-lipgloss.Height(headerContent)-lipgloss.Height(composer)-2)
+	output = fitBlock(ansi.Hardwrap(output, innerWidth, false), innerWidth, availableOutputHeight)
+	content := headerContent + "\n\n" + output + "\n" + composer
 	return panelStyle(width, height).Render(fitBlock(content, innerWidth, max(1, height-2)))
 }
 
@@ -155,6 +158,24 @@ func renderModeSwitch(mode OutputMode) string {
 		live = activeTab.Render("[LIVE]")
 	}
 	return reports + "  " + live
+}
+
+func renderComposer(model Model, task firstmate.Task, width int) string {
+	focus := "i to focus"
+	style := labelStyle
+	if model.composer.Focused() {
+		focus = "focused - enter sends, esc returns"
+		style = focusStyle
+	}
+	status := model.sendStatus
+	if status == "" {
+		status = focus
+	}
+	return strings.Join([]string{
+		style.Render("MESSAGE / " + string(task.Ownership)),
+		fitLines(model.composer.View(), width),
+		fitLines(labelStyle.Render(status), width),
+	}, "\n")
 }
 
 func renderReport(report firstmate.Report) string {
@@ -205,10 +226,12 @@ func renderHelp(model Model, width, height int) string {
 		"enter          switch Reports / Live",
 		"esc            close help or return to Reports",
 		"r              refresh current Firstmate reads",
+		"i              focus selected-worker message composer",
+		"enter          send while composer is focused",
 		"?              toggle this help",
 		"q              quit",
 		"",
-		labelStyle.Render("All views are read-only. Live never accepts input."),
+		labelStyle.Render("Messages route only to the selected active worker."),
 	}
 	return panelStyle(width, height).Render(fitBlock(strings.Join(lines, "\n"), max(1, width-2), max(1, height-2)))
 }

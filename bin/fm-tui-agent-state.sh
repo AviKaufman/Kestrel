@@ -15,7 +15,7 @@ fi
 STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 ID=${1:-}
 case "$ID" in
-  ''|*[!A-Za-z0-9._-]*)
+  ''|[!A-Za-z0-9]*|*[!A-Za-z0-9._-]*)
     echo "error: invalid task id '$ID'" >&2
     exit 1
     ;;

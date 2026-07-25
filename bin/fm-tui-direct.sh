@@ -23,17 +23,7 @@ STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
 . "$SCRIPT_DIR/fm-backend.sh"
 
 valid_target() {
-  case "$1" in
-    *[!A-Za-z0-9_.:-]*|*:*:*|''|:*)
-      return 1
-      ;;
-    *:*.*)
-      return 0
-      ;;
-    *)
-      return 1
-      ;;
-  esac
+  [[ $1 =~ ^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+\.[0-9]+$ ]]
 }
 
 managed_window() {
@@ -102,6 +92,8 @@ case "${1:-}" in
     [ "$#" -eq 3 ] || { echo "error: send requires one target and one message argument" >&2; exit 1; }
     valid_target "$target" || { echo "error: invalid direct target '$target'" >&2; exit 1; }
     [ -n "$message" ] || { echo "error: message must not be empty" >&2; exit 1; }
+    message_bytes=$(LC_ALL=C; printf '%s' "$message" | wc -c | tr -d '[:space:]')
+    [ "$message_bytes" -le 4096 ] || { echo "error: message exceeds 4096-byte limit" >&2; exit 1; }
     direct_record "$target" >/dev/null \
       || { echo "error: target '$target' is not a live private Codex pane" >&2; exit 1; }
     case "$message" in

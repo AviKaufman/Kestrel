@@ -60,6 +60,18 @@ func RenderSnapshot(home string, tasks []firstmate.Task, live []string) string {
 	fmt.Fprintf(&output, "window: %s\n", valueOrDash(meta.Window))
 
 	fmt.Fprintln(&output)
+	fmt.Fprintln(&output, "COMPOSER")
+	switch task.Ownership {
+	case firstmate.FirstmateManaged:
+		fmt.Fprintln(&output, "send route: Firstmate managed via fm-send.sh")
+	case firstmate.CaptainPrivate:
+		fmt.Fprintln(&output, "send route: Captain private / Direct Codex via fm-tui-direct.sh")
+	default:
+		fmt.Fprintln(&output, "send route: unavailable")
+	}
+	fmt.Fprintf(&output, "message limit: %d bytes\n", firstmate.MaxMessageBytes)
+
+	fmt.Fprintln(&output)
 	fmt.Fprintln(&output, "REPORTS")
 	if task.Report.Present {
 		fmt.Fprintf(&output, "path: %s\n", task.Report.Path)
