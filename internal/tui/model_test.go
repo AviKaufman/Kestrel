@@ -27,7 +27,7 @@ func (deadlineCheckingSource) Load(ctx context.Context) ([]firstmate.Task, error
 	return sampleTasks(), nil
 }
 
-func (deadlineCheckingSource) LoadLive(ctx context.Context, _ string) ([]string, error) {
+func (deadlineCheckingSource) LoadLive(ctx context.Context, _ firstmate.Task) ([]string, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		return nil, errors.New("missing deadline")
 	}
@@ -38,7 +38,7 @@ func (source fakeSource) Load(context.Context) ([]firstmate.Task, error) {
 	return source.tasks, nil
 }
 
-func (source fakeSource) LoadLive(context.Context, string) ([]string, error) {
+func (source fakeSource) LoadLive(context.Context, firstmate.Task) ([]string, error) {
 	return source.live, nil
 }
 
@@ -142,6 +142,7 @@ func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 	for _, expected := range []string{
 		"FIRSTMATE TUI",
 		"alpha",
+		"Firstmate managed",
 		"CURRENT STATE",
 		"REPORTS",
 		"LIVE",
@@ -192,12 +193,16 @@ func sampleTasks() []firstmate.Task {
 			Events: []firstmate.StatusEvent{
 				{Verb: "working", Note: "setup complete", Raw: "working: setup complete"},
 			},
-			Report: firstmate.Report{Path: "/fake/home/data/alpha/report.md", Present: true, Content: "# Alpha report\n\nOfficial result."},
+			Report:    firstmate.Report{Path: "/fake/home/data/alpha/report.md", Present: true, Content: "# Alpha report\n\nOfficial result."},
+			Ownership: firstmate.FirstmateManaged,
+			Target:    "alpha",
 		},
 		{
-			Metadata: firstmate.Metadata{ID: "beta", Kind: "ship"},
-			Current:  firstmate.CurrentState{State: "unknown", Source: "none"},
-			Report:   firstmate.Report{Path: "/fake/home/data/beta/report.md"},
+			Metadata:  firstmate.Metadata{ID: "beta", Kind: "ship"},
+			Current:   firstmate.CurrentState{State: "unknown", Source: "none"},
+			Report:    firstmate.Report{Path: "/fake/home/data/beta/report.md"},
+			Ownership: firstmate.CaptainPrivate,
+			Target:    "private:beta.0",
 		},
 	}
 }

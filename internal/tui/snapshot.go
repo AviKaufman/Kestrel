@@ -19,7 +19,12 @@ func RenderSnapshot(home string, tasks []firstmate.Task, live []string) string {
 		fmt.Fprintln(&output, "No task metadata found.")
 		return output.String()
 	}
+	var previous firstmate.Ownership
 	for index, task := range tasks {
+		if index == 0 || task.Ownership != previous {
+			fmt.Fprintf(&output, "[%s]\n", task.Ownership)
+			previous = task.Ownership
+		}
 		prefix := "  "
 		if index == 0 {
 			prefix = "> "
@@ -40,6 +45,7 @@ func RenderSnapshot(home string, tasks []firstmate.Task, live []string) string {
 	fmt.Fprintln(&output)
 	fmt.Fprintln(&output, "INSPECTOR")
 	fmt.Fprintf(&output, "task id: %s\n", meta.ID)
+	fmt.Fprintf(&output, "ownership: %s\n", task.Ownership)
 	fmt.Fprintf(&output, "current state: %s\n", valueOrDash(task.Current.State))
 	fmt.Fprintf(&output, "current source: %s\n", valueOrDash(task.Current.Source))
 	fmt.Fprintf(&output, "current detail: %s\n", valueOrDash(task.Current.Detail))

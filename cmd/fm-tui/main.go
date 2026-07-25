@@ -21,7 +21,9 @@ type options struct {
 	home       string
 	root       string
 	statePath  string
+	agentPath  string
 	peekPath   string
+	directPath string
 	snapshot   bool
 	statusRows int
 	liveRows   int
@@ -38,7 +40,9 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 	flags.StringVar(&options.home, "home", "", "Firstmate operational home (default: FM_HOME, then --root)")
 	flags.StringVar(&options.root, "root", "", "Firstmate code root containing bin/ (default: FM_ROOT, then current directory)")
 	flags.StringVar(&options.statePath, "crew-state", "", "path to fm-crew-state.sh")
+	flags.StringVar(&options.agentPath, "agent-state", "", "path to fm-tui-agent-state.sh")
 	flags.StringVar(&options.peekPath, "peek", "", "path to fm-peek.sh")
+	flags.StringVar(&options.directPath, "direct", "", "path to fm-tui-direct.sh")
 	flags.BoolVar(&options.snapshot, "snapshot", false, "print deterministic non-interactive output")
 	flags.IntVar(&options.statusRows, "status-lines", 20, "maximum status events per task")
 	flags.IntVar(&options.liveRows, "live-lines", 40, "maximum captured worker lines")
@@ -78,6 +82,16 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "fm-tui: live adapter: %v\n", err)
 		return 1
 	}
+	agentPath, err := resolveAdapter(options.agentPath, filepath.Join(root, "bin", "fm-tui-agent-state.sh"))
+	if err != nil {
+		fmt.Fprintf(stderr, "fm-tui: agent-state adapter: %v\n", err)
+		return 1
+	}
+	directPath, err := resolveAdapter(options.directPath, filepath.Join(root, "bin", "fm-tui-direct.sh"))
+	if err != nil {
+		fmt.Fprintf(stderr, "fm-tui: direct-session adapter: %v\n", err)
+		return 1
+	}
 
 	loader := firstmate.Loader{
 		Home: home,
@@ -85,8 +99,17 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 			Path: statePath,
 			Home: home,
 		},
+		Agents: firstmate.ShellAgentStateResolver{
+			Path: agentPath,
+			Home: home,
+		},
 		Live: firstmate.ShellLiveReader{
 			Path:  peekPath,
+			Home:  home,
+			Lines: options.liveRows,
+		},
+		Direct: firstmate.ShellDirectSessionSource{
+			Path:  directPath,
 			Home:  home,
 			Lines: options.liveRows,
 		},
@@ -104,7 +127,7 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 	}
 	var live []string
 	if len(tasks) > 0 {
-		live, err = loader.LoadLive(ctx, tasks[0].Metadata.ID)
+		live, err = loader.LoadLive(ctx, tasks[0])
 		if err != nil {
 			live = []string{"[worker capture unavailable] " + err.Error()}
 		}

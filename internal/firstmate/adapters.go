@@ -76,6 +76,90 @@ type ShellLiveReader struct {
 	ExtraEnv []string
 }
 
+// ShellAgentStateResolver invokes the existing recovery-grade endpoint adapter.
+type ShellAgentStateResolver struct {
+	Path     string
+	Home     Home
+	ExtraEnv []string
+}
+
+func (resolver ShellAgentStateResolver) ResolveAgentState(ctx context.Context, taskID string) (string, error) {
+	stdout, stderr, truncated, err := runBounded(
+		ctx,
+		resolver.Path,
+		[]string{taskID},
+		adapterEnvironment(resolver.Home, resolver.ExtraEnv),
+	)
+	if err != nil {
+		return "", fmt.Errorf("resolve agent state for %s: %w: %s", taskID, err, strings.TrimSpace(stderr))
+	}
+	if truncated {
+		return "", fmt.Errorf("resolve agent state for %s: adapter output exceeded %d bytes", taskID, adapterOutputLimit)
+	}
+	state := strings.TrimSpace(stdout)
+	switch state {
+	case "alive", "dead", "missing", "ambiguous", "unreadable":
+		return state, nil
+	default:
+		return "", fmt.Errorf("resolve agent state for %s: invalid adapter output %q", taskID, state)
+	}
+}
+
+// ShellDirectSessionSource invokes the bounded direct Codex tmux adapter.
+type ShellDirectSessionSource struct {
+	Path     string
+	Home     Home
+	Lines    int
+	ExtraEnv []string
+}
+
+func (source ShellDirectSessionSource) Discover(ctx context.Context, _ []Metadata) ([]DirectSession, error) {
+	stdout, stderr, truncated, err := runBounded(
+		ctx,
+		source.Path,
+		[]string{"list"},
+		adapterEnvironment(source.Home, source.ExtraEnv),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("discover direct Codex sessions: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	if truncated {
+		return nil, fmt.Errorf("discover direct Codex sessions: adapter output exceeded %d bytes", adapterOutputLimit)
+	}
+	return ParseDirectSessions(stdout)
+}
+
+func (source ShellDirectSessionSource) Read(ctx context.Context, target string) ([]string, error) {
+	if !directTargetPattern.MatchString(target) {
+		return nil, fmt.Errorf("invalid direct-session target %q", target)
+	}
+	lines := source.Lines
+	if lines <= 0 {
+		lines = 40
+	}
+	stdout, stderr, truncated, err := runBounded(
+		ctx,
+		source.Path,
+		[]string{"peek", target, strconv.Itoa(lines)},
+		adapterEnvironment(source.Home, source.ExtraEnv),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read direct Codex session %s: %w: %s", target, err, strings.TrimSpace(stderr))
+	}
+	rawLines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(rawLines) == 1 && rawLines[0] == "" {
+		rawLines = nil
+	}
+	if len(rawLines) > lines {
+		rawLines = rawLines[len(rawLines)-lines:]
+		truncated = true
+	}
+	if truncated && len(rawLines) > 0 {
+		rawLines[0] = "[earlier live output omitted] " + rawLines[0]
+	}
+	return rawLines, nil
+}
+
 func (reader ShellLiveReader) Read(ctx context.Context, taskID string) ([]string, error) {
 	lines := reader.Lines
 	if lines <= 0 {

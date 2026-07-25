@@ -34,17 +34,21 @@ type Report struct {
 
 // Task is the read-only view model assembled from Firstmate's existing owners.
 type Task struct {
-	Metadata Metadata
-	Current  CurrentState
-	Events   []StatusEvent
-	Report   Report
+	Metadata  Metadata
+	Current   CurrentState
+	Events    []StatusEvent
+	Report    Report
+	Ownership Ownership
+	Target    string
 }
 
 // Loader joins task metadata, current state, bounded event history, and reports.
 type Loader struct {
 	Home           Home
 	States         StateResolver
+	Agents         AgentStateResolver
 	Live           LiveReader
+	Direct         DirectSessionSource
 	StatusMaxLines int
 	StatusMaxBytes int
 	ReportMaxBytes int
@@ -53,6 +57,9 @@ type Loader struct {
 func (loader Loader) Load(ctx context.Context) ([]Task, error) {
 	if loader.States == nil {
 		return nil, fmt.Errorf("current-state resolver is required")
+	}
+	if loader.Agents == nil {
+		return nil, fmt.Errorf("agent-state resolver is required")
 	}
 	metas, err := LoadTaskMetadata(loader.Home.StateDir)
 	if err != nil {
@@ -82,6 +89,10 @@ func (loader Loader) Load(ctx context.Context) ([]Task, error) {
 				Detail: stateErr.Error(),
 			}
 		}
+		agentState, agentErr := loader.Agents.ResolveAgentState(ctx, meta.ID)
+		if agentErr != nil || agentState != "alive" || isTerminalState(current.State) {
+			continue
+		}
 		events, err := ReadStatusEvents(
 			filepath.Join(loader.Home.StateDir, meta.ID+".status"),
 			statusLines,
@@ -98,20 +109,58 @@ func (loader Loader) Load(ctx context.Context) ([]Task, error) {
 			return nil, err
 		}
 		tasks = append(tasks, Task{
-			Metadata: meta,
-			Current:  current,
-			Events:   events,
-			Report:   report,
+			Metadata:  meta,
+			Current:   current,
+			Events:    events,
+			Report:    report,
+			Ownership: FirstmateManaged,
+			Target:    meta.ID,
 		})
+	}
+	if loader.Direct != nil {
+		sessions, err := loader.Direct.Discover(ctx, metas)
+		if err != nil {
+			return nil, err
+		}
+		for _, session := range sessions {
+			tasks = append(tasks, Task{
+				Metadata: Metadata{
+					ID:       session.Target,
+					Project:  session.Project,
+					Kind:     "direct-session",
+					Mode:     "private",
+					Harness:  "codex",
+					Worktree: session.Project,
+					Window:   session.Target,
+				},
+				Current: CurrentState{
+					State:  "working",
+					Source: "tmux",
+					Detail: "live Direct Codex session",
+				},
+				Ownership: CaptainPrivate,
+				Target:    session.Target,
+			})
+		}
 	}
 	return tasks, nil
 }
 
-func (loader Loader) LoadLive(ctx context.Context, taskID string) ([]string, error) {
-	if loader.Live == nil {
-		return nil, fmt.Errorf("live reader is required")
+func (loader Loader) LoadLive(ctx context.Context, task Task) ([]string, error) {
+	switch task.Ownership {
+	case FirstmateManaged:
+		if loader.Live == nil {
+			return nil, fmt.Errorf("live reader is required")
+		}
+		return loader.Live.Read(ctx, task.Metadata.ID)
+	case CaptainPrivate:
+		if loader.Direct == nil {
+			return nil, fmt.Errorf("direct-session reader is required")
+		}
+		return loader.Direct.Read(ctx, task.Target)
+	default:
+		return nil, fmt.Errorf("unsupported worker ownership %q", task.Ownership)
 	}
-	return loader.Live.Read(ctx, taskID)
 }
 
 // ReadReport reads at most maxBytes from durable official output.

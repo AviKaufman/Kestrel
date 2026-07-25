@@ -25,7 +25,7 @@ const (
 // Source refreshes read-only Firstmate task and worker output.
 type Source interface {
 	Load(context.Context) ([]firstmate.Task, error)
-	LoadLive(context.Context, string) ([]string, error)
+	LoadLive(context.Context, firstmate.Task) ([]string, error)
 }
 
 // Model is the keyboard-driven root Bubble Tea model.
@@ -213,14 +213,15 @@ func (model Model) refresh() tea.Cmd {
 }
 
 func (model Model) loadSelectedLive() tea.Cmd {
-	if model.source == nil || model.selectedID() == "" {
+	task, found := model.selectedTask()
+	if model.source == nil || !found {
 		return nil
 	}
-	taskID := model.selectedID()
+	taskID := task.Metadata.ID
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
 		defer cancel()
-		lines, err := model.source.LoadLive(ctx, taskID)
+		lines, err := model.source.LoadLive(ctx, task)
 		return liveLoadedMsg{taskID: taskID, lines: lines, err: err}
 	}
 }
@@ -242,4 +243,11 @@ func indexOfTask(tasks []firstmate.Task, taskID string) int {
 		return -1
 	}
 	return 0
+}
+
+func (model Model) selectedTask() (firstmate.Task, bool) {
+	if model.selected < 0 || model.selected >= len(model.tasks) {
+		return firstmate.Task{}, false
+	}
+	return model.tasks[model.selected], true
 }

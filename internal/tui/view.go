@@ -69,7 +69,12 @@ func renderTaskList(tasks []firstmate.Task, selected, width, height int) string 
 	if len(tasks) == 0 {
 		lines = append(lines, labelStyle.Render("No task metadata found."))
 	} else {
+		var previous firstmate.Ownership
 		for index, task := range tasks {
+			if index == 0 || task.Ownership != previous {
+				lines = append(lines, ownershipStyle(task.Ownership).Render(string(task.Ownership)))
+				previous = task.Ownership
+			}
 			prefix := "  "
 			style := lipgloss.NewStyle().Foreground(colorInk)
 			if index == selected {
@@ -95,6 +100,7 @@ func renderInspector(model Model, width, height int) string {
 	meta := task.Metadata
 	header := []string{
 		titleStyle.Render("TASK / " + meta.ID),
+		fmt.Sprintf("%s %s", labelStyle.Render("OWNERSHIP"), ownershipStyle(task.Ownership).Render(string(task.Ownership))),
 		fmt.Sprintf("%s %s  %s %s",
 			labelStyle.Render("CURRENT STATE"),
 			stateStyle(task.Current.State).Render(valueOrDash(task.Current.State)),
@@ -131,6 +137,13 @@ func renderInspector(model Model, width, height int) string {
 	content := strings.Join(header, "\n") + "\n\n" + output
 	content = ansi.Hardwrap(content, innerWidth, false)
 	return panelStyle(width, height).Render(fitBlock(content, innerWidth, max(1, height-2)))
+}
+
+func ownershipStyle(ownership firstmate.Ownership) lipgloss.Style {
+	if ownership == firstmate.CaptainPrivate {
+		return lipgloss.NewStyle().Bold(true).Foreground(colorIris)
+	}
+	return lipgloss.NewStyle().Bold(true).Foreground(colorFoam)
 }
 
 func renderModeSwitch(mode OutputMode) string {
