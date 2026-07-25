@@ -179,13 +179,14 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			model.createStatus = "Create failed: " + message.err.Error()
 			return model, nil
 		}
-		model.tasks = message.tasks
-		model.destination = PrivateDestination
-		model.selected = indexOfTask(model.destinationTasks(), message.session.Target)
-		if model.selected < 0 {
+		selected := indexOfPrivateTarget(message.tasks, message.session.Target)
+		if selected < 0 {
 			model.createStatus = "Create failed: created session was not rediscovered"
 			return model, nil
 		}
+		model.tasks = message.tasks
+		model.destination = PrivateDestination
+		model.selected = selected
 		model.creatingPrivate = false
 		model.privateInput.Blur()
 		model.privateInput.Reset()
@@ -490,7 +491,9 @@ func (model *Model) createPrivate() tea.Cmd {
 			return privateCreatedMsg{err: fmt.Errorf("rediscover created session: %w", err)}
 		}
 		for _, task := range tasks {
-			if task.Ownership == firstmate.CaptainPrivate && task.Target == session.Target {
+			if task.Ownership == firstmate.CaptainPrivate &&
+				task.Target == session.Target &&
+				task.Metadata.ID == session.Target {
 				return privateCreatedMsg{session: session, tasks: tasks}
 			}
 		}
@@ -508,6 +511,20 @@ func indexOfTask(tasks []firstmate.Task, taskID string) int {
 		return -1
 	}
 	return 0
+}
+
+func indexOfPrivateTarget(tasks []firstmate.Task, target string) int {
+	index := 0
+	for _, task := range tasks {
+		if task.Ownership != firstmate.CaptainPrivate {
+			continue
+		}
+		if task.Target == target && task.Metadata.ID == target {
+			return index
+		}
+		index++
+	}
+	return -1
 }
 
 func (model Model) selectedTask() (firstmate.Task, bool) {

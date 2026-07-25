@@ -200,6 +200,30 @@ func TestPrivateCreateFailureKeepsDestinationAndDraftWithoutSelection(t *testing
 	}
 }
 
+func TestPrivateCreateInvalidRediscoveryKeepsDestination(t *testing.T) {
+	session := firstmate.DirectSession{Target: "private:codex-notes.0", Project: "/projects/notes"}
+	source := &createSource{
+		fakeSource: fakeSource{tasks: []firstmate.Task{{
+			Metadata:  firstmate.Metadata{ID: "different-id"},
+			Ownership: firstmate.CaptainPrivate,
+			Target:    session.Target,
+		}}},
+		session: session,
+	}
+	model := NewModel("/fake/home", availableHub(), nil, nil, source)
+	model = updateModel(t, model, keyPress("n"))
+	model = updateModel(t, model, keyPress("notes"))
+	updated, command := model.Update(specialKey(tea.KeyEnter))
+	model = updated.(Model)
+	model = updateModel(t, model, command())
+	if model.Destination() != HubDestination || !model.CreatingPrivate() {
+		t.Fatalf("invalid rediscovery destination=%v creating=%v", model.Destination(), model.CreatingPrivate())
+	}
+	if !strings.Contains(model.CreateStatus(), "not rediscovered") {
+		t.Fatalf("invalid rediscovery status=%q", model.CreateStatus())
+	}
+}
+
 func TestDestinationsKeepHubPersistentAndWorkersSeparated(t *testing.T) {
 	tasks := sampleTasks()
 	model := NewModel("/fake/home", availableHub(), tasks, nil, fakeSource{tasks: tasks})

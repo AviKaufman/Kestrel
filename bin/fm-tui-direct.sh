@@ -135,9 +135,8 @@ case "${1:-}" in
     codex_bin=$(command -v codex 2>/dev/null) \
       || { echo "error: codex command is unavailable" >&2; exit 1; }
     [ -x "$codex_bin" ] || { echo "error: codex command '$codex_bin' is not executable" >&2; exit 1; }
-    case "$codex_bin" in
-      *$'\t'*|*$'\r'*|*$'\n'*) echo "error: codex command path is invalid" >&2; exit 1 ;;
-    esac
+    [[ $codex_bin =~ ^/[A-Za-z0-9_./+-]+$ ]] \
+      || { echo "error: codex command path is not safe for tmux launch" >&2; exit 1; }
 
     if [ -n "${TMUX:-}" ]; then
       session=$(tmux display-message -p '#S') \
@@ -168,6 +167,7 @@ case "${1:-}" in
       ''|*[!0-9]*|0) retries=30 ;;
     esac
     [ "$retries" -le 100 ] || retries=100
+    [[ $sleep_s =~ ^(0|0\.[0-9]{1,3}|1(\.0{1,3})?)$ ]] || sleep_s=0.1
     created=
     i=0
     while [ "$i" -lt "$retries" ]; do

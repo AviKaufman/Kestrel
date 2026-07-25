@@ -165,6 +165,14 @@ if env "${common_env[@]}" TMUX=/tmp/fake FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" \
   "$ROOT/bin/fm-tui-direct.sh" create notes relative/path >/dev/null 2>&1; then
   fail "private create accepted a relative path"
 fi
+UNSAFE_BIN="$TMP_ROOT/unsafe;bin"
+mkdir -p "$UNSAFE_BIN"
+cp "$FAKEBIN/codex" "$UNSAFE_BIN/codex"
+if env "${common_env[@]}" PATH="$UNSAFE_BIN:$FAKEBIN:$PATH" TMUX=/tmp/fake \
+  FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" \
+  "$ROOT/bin/fm-tui-direct.sh" create notes "$PRIVATE_CWD" >/dev/null 2>&1; then
+  fail "private create accepted a shell-sensitive Codex command path"
+fi
 if env "${common_env[@]}" TMUX=/tmp/fake FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" FM_FAIL_CREATE=1 \
   "$ROOT/bin/fm-tui-direct.sh" create notes "$PRIVATE_CWD" >/dev/null 2>&1; then
   fail "private create ignored a tmux launch failure"
