@@ -19,26 +19,23 @@ var (
 	colorGold   = lipgloss.Color("#f6c177")
 	colorLove   = lipgloss.Color("#eb6f92")
 
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorInk)
-	labelStyle = lipgloss.NewStyle().Foreground(colorSubtle)
-	focusStyle = lipgloss.NewStyle().Bold(true).Foreground(colorFoam)
-	tabStyle   = lipgloss.NewStyle().Foreground(colorSubtle)
-	activeTab  = lipgloss.NewStyle().Bold(true).Foreground(colorFoam)
-	errorStyle = lipgloss.NewStyle().Foreground(colorLove)
+	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorInk)
+	labelStyle  = lipgloss.NewStyle().Foreground(colorSubtle)
+	focusStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorFoam)
+	tabStyle    = lipgloss.NewStyle().Foreground(colorSubtle)
+	activeTab   = lipgloss.NewStyle().Bold(true).Foreground(colorFoam)
+	errorStyle  = lipgloss.NewStyle().Foreground(colorLove)
+	headerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(colorInk).
+			Background(lipgloss.Color("#26233a"))
 )
 
 func (model Model) render() string {
 	width := max(40, model.width)
 	height := max(16, model.height)
-	header := renderHeader(model.home, width)
-	footer := model.help.View(model.keys)
-	footer = fitLines(footer, width)
-	if model.helpVisible {
-		content := renderHelp(model, width, height-2)
-		return fitFrame(strings.Join([]string{header, content, footer}, "\n"), width, height)
-	}
-
-	bodyHeight := max(10, height-lipgloss.Height(header)-lipgloss.Height(footer)-2)
+	header := renderHeader(model.home, len(model.tasks), width)
+	bodyHeight := max(10, height-lipgloss.Height(header))
 	var body string
 	if width < 76 {
 		listHeight := min(5, max(3, bodyHeight/4))
@@ -55,12 +52,16 @@ func (model Model) render() string {
 	if model.err != nil {
 		body = fitLines(errorStyle.Render("read error: "+model.err.Error())+"\n"+body, width)
 	}
-	return fitFrame(strings.Join([]string{header, body, footer}, "\n"), width, height)
+	frame := fitFrame(header+"\n"+body, width, height)
+	if model.helpVisible {
+		frame = overlayModal(frame, renderHelp(width, height), width, height)
+	}
+	return frame
 }
 
-func renderHeader(home string, width int) string {
-	content := titleStyle.Render("FIRSTMATE TUI") + "  " + labelStyle.Render("home: ") + home
-	return panelStyle(width, 3).Render(fitBlock(content, max(1, width-2), 1))
+func renderHeader(home string, workerCount, width int) string {
+	content := fmt.Sprintf(" firstmate  |  workers %d  |  home %s  |  ? help ", workerCount, home)
+	return headerStyle.Width(width).Render(ansi.Truncate(content, width, "…"))
 }
 
 func renderTaskList(tasks []firstmate.Task, selected, width, height int) string {
@@ -239,9 +240,9 @@ func renderLive(task firstmate.Task, live []string) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderHelp(model Model, width, height int) string {
+func renderHelp(width, height int) string {
 	lines := []string{
-		titleStyle.Render("KEYBOARD HELP"),
+		focusStyle.Render("FOCUSED MODAL / KEYBOARD HELP"),
 		"",
 		"j / down       next task",
 		"k / up         previous task",
@@ -257,7 +258,44 @@ func renderHelp(model Model, width, height int) string {
 		"",
 		labelStyle.Render("Messages route only to the selected active worker."),
 	}
-	return panelStyle(width, height).Render(fitBlock(strings.Join(lines, "\n"), max(1, width-2), max(1, height-2)))
+	modalWidth := min(60, max(32, width-4))
+	modalHeight := min(18, max(10, height-4))
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(colorGold).
+		Width(max(1, modalWidth-2)).
+		Height(max(1, modalHeight-2)).
+		Render(fitBlock(strings.Join(lines, "\n"), max(1, modalWidth-2), max(1, modalHeight-2)))
+}
+
+func overlayModal(base, modal string, width, height int) string {
+	baseLines := strings.Split(fitFrame(base, width, height), "\n")
+	frameHeight := len(baseLines)
+	modalLines := strings.Split(modal, "\n")
+	modalWidth := 0
+	for _, line := range modalLines {
+		modalWidth = max(modalWidth, lipgloss.Width(line))
+	}
+	startX := max(0, (width-modalWidth)/2)
+	startY := max(0, (frameHeight-len(modalLines))/2)
+	for index, modalLine := range modalLines {
+		row := startY + index
+		if row >= frameHeight {
+			break
+		}
+		baseLine := padLine(baseLines[row], width)
+		left := ansi.Cut(baseLine, 0, startX)
+		right := ansi.Cut(baseLine, startX+modalWidth, width)
+		baseLines[row] = left + modalLine + right
+	}
+	return strings.Join(baseLines, "\n")
+}
+
+func padLine(line string, width int) string {
+	if current := lipgloss.Width(line); current < width {
+		return line + strings.Repeat(" ", width-current)
+	}
+	return ansi.Truncate(line, width, "")
 }
 
 func panelStyle(width, height int) lipgloss.Style {

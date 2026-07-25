@@ -6,11 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/help"
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"github.com/kunchenguid/firstmate/internal/firstmate"
 )
@@ -46,7 +44,6 @@ type Model struct {
 	helpVisible bool
 	err         error
 	keys        keyMap
-	help        help.Model
 	composer    textinput.Model
 	sendStatus  string
 	sending     bool
@@ -70,13 +67,6 @@ type sendFinishedMsg struct {
 }
 
 func NewModel(home string, tasks []firstmate.Task, live []string, source Source) Model {
-	helpModel := help.New()
-	helpModel.Styles.ShortKey = lipgloss.NewStyle().Foreground(colorGold)
-	helpModel.Styles.ShortDesc = lipgloss.NewStyle().Foreground(colorSubtle)
-	helpModel.Styles.ShortSeparator = lipgloss.NewStyle().Foreground(colorMuted)
-	helpModel.Styles.FullKey = helpModel.Styles.ShortKey
-	helpModel.Styles.FullDesc = helpModel.Styles.ShortDesc
-	helpModel.Styles.FullSeparator = helpModel.Styles.ShortSeparator
 	composer := textinput.New()
 	composer.Prompt = "> "
 	composer.Placeholder = "Write a short message to the selected worker"
@@ -91,7 +81,6 @@ func NewModel(home string, tasks []firstmate.Task, live []string, source Source)
 		width:      110,
 		height:     34,
 		keys:       defaultKeys(),
-		help:       helpModel,
 		outputMode: ReportsMode,
 		composer:   composer,
 	}
@@ -110,7 +99,6 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		model.width = max(40, message.Width)
 		model.height = max(16, message.Height)
-		model.help.SetWidth(model.width - 2)
 		model.composer.SetWidth(max(16, model.width-model.width/4-8))
 		return model, nil
 	case fleetLoadedMsg:
@@ -167,13 +155,11 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if key.Matches(message, model.keys.Help) {
 			model.helpVisible = !model.helpVisible
-			model.help.ShowAll = model.helpVisible
 			return model, nil
 		}
 		if key.Matches(message, model.keys.Back) {
 			if model.helpVisible {
 				model.helpVisible = false
-				model.help.ShowAll = false
 			} else {
 				model.outputMode = ReportsMode
 			}

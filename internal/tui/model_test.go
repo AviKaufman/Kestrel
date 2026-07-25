@@ -141,10 +141,24 @@ func TestModelHelpRefreshAndQuitKeys(t *testing.T) {
 	tasks := sampleTasks()
 	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
 
+	if strings.Contains(ansi.Strip(model.View().Content), "KEYBOARD HELP") ||
+		strings.Contains(ansi.Strip(model.View().Content), "k/up previous") {
+		t.Fatalf("help is visible by default:\n%s", model.View().Content)
+	}
 	model = updateModel(t, model, keyPress("?"))
 	if !model.HelpVisible() {
 		t.Fatal("? did not open help")
 	}
+	selected := model.Selected()
+	model = updateModel(t, model, keyPress("j"))
+	if model.Selected() != selected {
+		t.Fatal("navigation changed selection while help was open")
+	}
+	model = updateModel(t, model, keyPress("?"))
+	if model.HelpVisible() {
+		t.Fatal("? did not close help")
+	}
+	model = updateModel(t, model, keyPress("?"))
 	model = updateModel(t, model, specialKey(tea.KeyEscape))
 	if model.HelpVisible() {
 		t.Fatal("esc did not close help")
@@ -157,6 +171,49 @@ func TestModelHelpRefreshAndQuitKeys(t *testing.T) {
 	_, quit := model.Update(keyPress("q"))
 	if quit == nil {
 		t.Fatal("q returned nil quit command")
+	}
+}
+
+func TestHelpModalOverlaysWithoutChangingFrameGeometry(t *testing.T) {
+	model := NewModel("/fake/home", sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 92, Height: 26})
+	base := model.View().Content
+	model = updateModel(t, model, keyPress("?"))
+	overlay := model.View().Content
+
+	if !strings.Contains(ansi.Strip(overlay), "KEYBOARD HELP") ||
+		!strings.Contains(ansi.Strip(overlay), "FOCUSED MODAL") {
+		t.Fatalf("help modal lacks explicit focus:\n%s", overlay)
+	}
+	if lipgloss.Height(overlay) != lipgloss.Height(base) {
+		t.Fatalf("help changed frame height: base=%d overlay=%d", lipgloss.Height(base), lipgloss.Height(overlay))
+	}
+	for _, line := range strings.Split(overlay, "\n") {
+		if width := lipgloss.Width(line); width > 92 {
+			t.Fatalf("help line width = %d, want <= 92: %q", width, line)
+		}
+	}
+	if !strings.Contains(ansi.Strip(overlay), "firstmate") {
+		t.Fatalf("help displaced the compact header:\n%s", overlay)
+	}
+}
+
+func TestMainGeometryIsFlushBelowCompactHeader(t *testing.T) {
+	model := NewModel("/fake/home", sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 28})
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+
+	if len(lines) < 3 || !strings.Contains(lines[0], "firstmate") {
+		t.Fatalf("first line is not the compact header:\n%s", model.View().Content)
+	}
+	if strings.TrimSpace(lines[1]) == "" || !strings.HasPrefix(lines[1], "┌") {
+		t.Fatalf("main panes are not flush beneath header: line 1=%q", lines[1])
+	}
+	if strings.Contains(lines[1], "┐ ┌") {
+		t.Fatalf("selector and inspector have a gap: %q", lines[1])
+	}
+	if strings.Contains(ansi.Strip(model.View().Content), "k/up previous") {
+		t.Fatalf("permanent key legend remains visible:\n%s", model.View().Content)
 	}
 }
 
@@ -288,7 +345,7 @@ func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 	content := model.View().Content
 
 	for _, expected := range []string{
-		"FIRSTMATE TUI",
+		"firstmate",
 		"alpha",
 		"Firstmate managed",
 		"STATE",
@@ -305,8 +362,8 @@ func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 			t.Fatalf("rendered line width = %d, want <= 64: %q", width, line)
 		}
 	}
-	if bottomBorders := strings.Count(ansi.Strip(content), "└"); bottomBorders < 3 {
-		t.Fatalf("rendered bottom borders = %d, want header, list, and inspector borders:\n%s", bottomBorders, content)
+	if bottomBorders := strings.Count(ansi.Strip(content), "└"); bottomBorders < 2 {
+		t.Fatalf("rendered bottom borders = %d, want list and inspector borders:\n%s", bottomBorders, content)
 	}
 }
 
