@@ -29,7 +29,7 @@ The snapshot mode prints stable, ANSI-free output for tests and review:
 go run ./cmd/fm-tui --snapshot --home /absolute/path/to/firstmate-home
 ```
 
-The output shows the compact header, active Firstmate hub destination, hub authority and bounded conversation history, separate managed and private counts, all three send routes, the non-executing `n` action, and the worker inspector.
+The output shows the compact header, active Firstmate hub destination, hub authority and bounded conversation history, separate managed and private counts, applicable send routes, the non-executing `n` action, and the worker inspector when a worker is present.
 It orders Firstmate-managed workers by task id, then captain-private Direct Codex sessions by target.
 Snapshot mode never sends a message or launches a thread.
 
@@ -63,14 +63,14 @@ Hub resolution, history, and messaging support tmux and Herdr only in this slice
 | `j`, `down` | Select the next worker within the active worker destination |
 | `k`, `up` | Select the previous worker within the active worker destination |
 | `g`, `G` | Select the first or last worker within the active worker destination |
-| `left`, `right` | Show Reports or Live |
-| `enter` | Switch between Reports and Live, or send while the composer is focused |
+| `left`, `right` | Show Reports or Live for a worker destination |
+| `enter` | Switch between worker Reports and Live, or send while the composer is focused |
 | `esc` | Close help, cancel private creation, blur the composer without clearing its draft, or return to Reports |
 | `i` | Focus the active hub or selected-worker message composer |
 | `n` | Open the contained new-private-Codex label prompt |
-| `r` | Refresh metadata, hub history, current state, reports, events, and the selected live capture |
+| `r` | Refresh metadata, hub history, current state, reports, events, and the selected capture when Live is visible |
 | `?` | Toggle keyboard help |
-| `q` | Quit |
+| `q`, `ctrl-c` | Quit |
 
 Reports reads only `data/<id>/report.md` and states explicitly when no durable report is present.
 Live labels `state/<id>.status` as bounded historical events and never treats its last line as current-state truth.
@@ -111,4 +111,6 @@ Status history defaults to 20 events and a 64 KiB byte bound per task.
 Hub conversation history defaults to the `--live-lines` bound and retains the newest available lines.
 Reports default to a 64 KiB byte bound.
 Read, send, and create adapter output is capped.
-Read adapter failures are shown as unavailable or unknown rather than replaced with a status-log guess.
+Externally sourced metadata, reports, events, captures, hub history, and errors have ANSI and terminal control sequences removed before interactive or snapshot rendering.
+Current-state adapter failures are shown as `unknown` when the recovery-grade agent probe still proves the worker alive, while hub and capture failures are shown as unavailable or read errors.
+Metadata, event, report, and direct-discovery failures fail the load rather than falling back to a status-log guess.
