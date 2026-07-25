@@ -93,6 +93,7 @@ if env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" peek private:notes.bad 20
   fail "direct adapter accepted an invalid target grammar"
 fi
 
+# shellcheck disable=SC2016 # Literal shell syntax proves argument-array safety.
 message='literal $HOME; $(touch /tmp/must-not-run)'
 sent=$(env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" send private:notes.0 "$message")
 [ "$sent" = sent ] || fail "direct send = '$sent'"

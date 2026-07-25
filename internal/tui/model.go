@@ -135,12 +135,9 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.err = message.err
 		return model, nil
 	case sendFinishedMsg:
-		if message.taskID != model.selectedID() {
-			return model, nil
-		}
 		model.sending = false
 		if message.err != nil {
-			model.sendStatus = "Send failed: " + message.err.Error()
+			model.sendStatus = "Send to " + message.taskID + " failed: " + message.err.Error()
 			return model, nil
 		}
 		if model.composer.Value() == message.draft {

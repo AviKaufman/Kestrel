@@ -237,6 +237,29 @@ func TestComposerKeepsDraftOnValidationAndAdapterFailure(t *testing.T) {
 	}
 }
 
+func TestComposerSendCompletionSettlesAfterSelectedWorkerDisappears(t *testing.T) {
+	tasks := sampleTasks()
+	source := &composerSource{fakeSource: fakeSource{tasks: tasks}}
+	model := NewModel("/fake/home", tasks, nil, source)
+	model = updateModel(t, model, keyPress("i"))
+	model = updateModel(t, model, keyPress("already sent"))
+
+	updated, command := model.Update(specialKey(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("enter returned nil send command")
+	}
+	model = updated.(Model)
+	model = updateModel(t, model, fleetLoadedMsg{tasks: tasks[1:]})
+	model = updateModel(t, model, command())
+
+	if model.sending {
+		t.Fatal("send completion left model in sending state after selection changed")
+	}
+	if model.Draft() != "" || !strings.Contains(model.SendStatus(), "Sent to alpha") {
+		t.Fatalf("completion draft=%q status=%q", model.Draft(), model.SendStatus())
+	}
+}
+
 func TestComposerViewIsVisibleAndOwnershipSpecific(t *testing.T) {
 	tasks := sampleTasks()
 	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
@@ -246,6 +269,15 @@ func TestComposerViewIsVisibleAndOwnershipSpecific(t *testing.T) {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("composer view missing %q:\n%s", expected, content)
 		}
+	}
+}
+
+func TestPrivateReportsStateHasExplicitAbsence(t *testing.T) {
+	tasks := sampleTasks()[1:]
+	model := NewModel("/fake/home", tasks, nil, fakeSource{tasks: tasks})
+	content := ansi.Strip(model.View().Content)
+	if !strings.Contains(content, "Direct Codex sessions have no durable Firstmate report") {
+		t.Fatalf("private report absence is not explicit:\n%s", content)
 	}
 }
 
@@ -259,9 +291,10 @@ func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 		"FIRSTMATE TUI",
 		"alpha",
 		"Firstmate managed",
-		"CURRENT STATE",
+		"STATE",
 		"REPORTS",
 		"LIVE",
+		"MESSAGE / Firstmate managed",
 	} {
 		if !strings.Contains(content, expected) {
 			t.Fatalf("view missing %q:\n%s", expected, content)

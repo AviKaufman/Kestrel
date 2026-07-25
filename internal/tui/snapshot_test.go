@@ -55,7 +55,7 @@ func TestRenderSnapshotShowsEmptyFleetAndAbsentReport(t *testing.T) {
 
 	tasks := sampleTasks()[1:]
 	absent := RenderSnapshot("/fake/home", tasks, nil)
-	if !strings.Contains(absent, "No durable report present at /fake/home/data/beta/report.md") {
+	if !strings.Contains(absent, "Direct Codex sessions have no durable Firstmate report.") {
 		t.Fatalf("absent report snapshot:\n%s", absent)
 	}
 }

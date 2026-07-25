@@ -41,7 +41,7 @@ func (model Model) render() string {
 	bodyHeight := max(10, height-lipgloss.Height(header)-lipgloss.Height(footer)-2)
 	var body string
 	if width < 76 {
-		listHeight := min(7, max(4, bodyHeight/3))
+		listHeight := min(5, max(3, bodyHeight/4))
 		list := renderTaskList(model.tasks, model.selected, width, listHeight)
 		inspector := renderInspector(model, width, max(6, bodyHeight-listHeight))
 		body = lipgloss.JoinVertical(lipgloss.Left, list, inspector)
@@ -98,35 +98,54 @@ func renderInspector(model Model, width, height int) string {
 	}
 	task := model.tasks[model.selected]
 	meta := task.Metadata
-	header := []string{
-		titleStyle.Render("TASK / " + meta.ID),
-		fmt.Sprintf("%s %s", labelStyle.Render("OWNERSHIP"), ownershipStyle(task.Ownership).Render(string(task.Ownership))),
-		fmt.Sprintf("%s %s  %s %s",
-			labelStyle.Render("CURRENT STATE"),
-			stateStyle(task.Current.State).Render(valueOrDash(task.Current.State)),
-			labelStyle.Render("SOURCE"),
-			valueOrDash(task.Current.Source),
-		),
-		fmt.Sprintf("%s %s", labelStyle.Render("DETAIL"), valueOrDash(task.Current.Detail)),
-		fmt.Sprintf("%s %s  %s %s  %s %s",
-			labelStyle.Render("PROJECT"), valueOrDash(meta.Project),
-			labelStyle.Render("KIND"), valueOrDash(meta.Kind),
-			labelStyle.Render("MODE"), valueOrDash(meta.Mode),
-		),
-		fmt.Sprintf("%s %s  %s %s  %s %s  %s %s",
-			labelStyle.Render("YOLO"), valueOrDash(meta.Yolo),
-			labelStyle.Render("HARNESS"), valueOrDash(meta.Harness),
-			labelStyle.Render("MODEL"), valueOrDash(meta.Model),
-			labelStyle.Render("EFFORT"), valueOrDash(meta.Effort),
-		),
-		fmt.Sprintf("%s %s", labelStyle.Render("WORKTREE"), valueOrDash(meta.Worktree)),
-		fmt.Sprintf("%s %s", labelStyle.Render("WINDOW"), valueOrDash(meta.Window)),
-		renderModeSwitch(model.outputMode),
+	var header []string
+	if width < 76 {
+		header = []string{
+			titleStyle.Render("TASK / "+meta.ID) + "  " + ownershipStyle(task.Ownership).Render("["+string(task.Ownership)+"]"),
+			fmt.Sprintf("%s %s  %s %s",
+				labelStyle.Render("STATE"),
+				stateStyle(task.Current.State).Render(valueOrDash(task.Current.State)),
+				labelStyle.Render("SOURCE"),
+				valueOrDash(task.Current.Source),
+			),
+			fmt.Sprintf("%s %s  %s %s  %s %s",
+				labelStyle.Render("PROJECT"), valueOrDash(meta.Project),
+				labelStyle.Render("KIND"), valueOrDash(meta.Kind),
+				labelStyle.Render("MODE"), valueOrDash(meta.Mode),
+			),
+			renderModeSwitch(model.outputMode),
+		}
+	} else {
+		header = []string{
+			titleStyle.Render("TASK / " + meta.ID),
+			fmt.Sprintf("%s %s", labelStyle.Render("OWNERSHIP"), ownershipStyle(task.Ownership).Render(string(task.Ownership))),
+			fmt.Sprintf("%s %s  %s %s",
+				labelStyle.Render("CURRENT STATE"),
+				stateStyle(task.Current.State).Render(valueOrDash(task.Current.State)),
+				labelStyle.Render("SOURCE"),
+				valueOrDash(task.Current.Source),
+			),
+			fmt.Sprintf("%s %s", labelStyle.Render("DETAIL"), valueOrDash(task.Current.Detail)),
+			fmt.Sprintf("%s %s  %s %s  %s %s",
+				labelStyle.Render("PROJECT"), valueOrDash(meta.Project),
+				labelStyle.Render("KIND"), valueOrDash(meta.Kind),
+				labelStyle.Render("MODE"), valueOrDash(meta.Mode),
+			),
+			fmt.Sprintf("%s %s  %s %s  %s %s  %s %s",
+				labelStyle.Render("YOLO"), valueOrDash(meta.Yolo),
+				labelStyle.Render("HARNESS"), valueOrDash(meta.Harness),
+				labelStyle.Render("MODEL"), valueOrDash(meta.Model),
+				labelStyle.Render("EFFORT"), valueOrDash(meta.Effort),
+			),
+			fmt.Sprintf("%s %s", labelStyle.Render("WORKTREE"), valueOrDash(meta.Worktree)),
+			fmt.Sprintf("%s %s", labelStyle.Render("WINDOW"), valueOrDash(meta.Window)),
+			renderModeSwitch(model.outputMode),
+		}
 	}
 
 	var output string
 	if model.outputMode == ReportsMode {
-		output = renderReport(task.Report)
+		output = renderReport(task)
 	} else {
 		live := model.liveLines
 		if model.liveTaskID != meta.ID {
@@ -178,8 +197,13 @@ func renderComposer(model Model, task firstmate.Task, width int) string {
 	}, "\n")
 }
 
-func renderReport(report firstmate.Report) string {
+func renderReport(task firstmate.Task) string {
 	lines := []string{labelStyle.Render("OFFICIAL OUTPUT / DURABLE REPORT")}
+	if task.Ownership == firstmate.CaptainPrivate {
+		lines = append(lines, "Direct Codex sessions have no durable Firstmate report.")
+		return strings.Join(lines, "\n")
+	}
+	report := task.Report
 	if !report.Present {
 		lines = append(lines, "No durable report present at "+report.Path)
 		return strings.Join(lines, "\n")

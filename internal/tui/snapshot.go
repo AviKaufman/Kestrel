@@ -73,7 +73,9 @@ func RenderSnapshot(home string, tasks []firstmate.Task, live []string) string {
 
 	fmt.Fprintln(&output)
 	fmt.Fprintln(&output, "REPORTS")
-	if task.Report.Present {
+	if task.Ownership == firstmate.CaptainPrivate {
+		fmt.Fprintln(&output, "Direct Codex sessions have no durable Firstmate report.")
+	} else if task.Report.Present {
 		fmt.Fprintf(&output, "path: %s\n", task.Report.Path)
 		fmt.Fprintln(&output, strings.TrimSpace(task.Report.Content))
 		if task.Report.Truncated {
