@@ -39,6 +39,8 @@ case "$1" in
   list-panes)
     printf 'fleet\tfm-managed\t0\tcodex\t/worktrees/managed\n'
     printf 'private\tnotes\t0\tcodex\t/projects/notes\n'
+    printf 'private\tnotifier\t0\tcodex-notifier\t/projects/notifier\n'
+    printf 'private\twrapper\t0\tmycodex\t/projects/wrapper\n'
     printf 'private\tshell\t0\tzsh\t/projects/shell\n'
     ;;
   list-windows)
@@ -55,6 +57,8 @@ case "$1" in
       *session_name*)
         case "$target" in
           private:notes.0) printf 'private\tnotes\t0\tcodex\t/projects/notes\n' ;;
+          private:notifier.0) printf 'private\tnotifier\t0\tcodex-notifier\t/projects/notifier\n' ;;
+          private:wrapper.0) printf 'private\twrapper\t0\tmycodex\t/projects/wrapper\n' ;;
           private:codex-notes.0|%7)
             command=codex
             [ "${FM_BAD_CREATE:-0}" != 1 ] || command=zsh
@@ -121,6 +125,12 @@ if env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" peek fleet:fm-managed.0 2
 fi
 if env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" peek private:notes.bad 20 >/dev/null 2>&1; then
   fail "direct adapter accepted an invalid target grammar"
+fi
+if env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" peek private:notifier.0 20 >/dev/null 2>&1; then
+  fail "direct adapter accepted codex-notifier as Codex"
+fi
+if env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" send private:wrapper.0 hello >/dev/null 2>&1; then
+  fail "direct adapter accepted a prefixed Codex command"
 fi
 
 # shellcheck disable=SC2016 # Literal shell syntax proves argument-array safety.

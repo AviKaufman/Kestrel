@@ -52,6 +52,7 @@ Direct discovery is tmux-only in this slice and does not attempt to discover Cod
 Hub resolution first honors explicit inherited supervisor authority.
 When an active primary TUI process lacks those markers, it can recover the same authority from the live session-lock owner's whitelisted environment without scanning tmux inventory.
 That recovery requires a readable Linux `/proc/<pid>/environ`; inherited authority remains the portable path on other systems.
+Hub resolution, history, and messaging support tmux and Herdr only in this slice; a primary running directly on cmux or another backend is reported as unavailable.
 
 ## Keys
 

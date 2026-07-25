@@ -45,10 +45,7 @@ managed_window() {
 
 codex_command() {
   local command=${1#-}
-  case "$command" in
-    *codex*) return 0 ;;
-    *) return 1 ;;
-  esac
+  [ "$command" = codex ]
 }
 
 direct_record() {

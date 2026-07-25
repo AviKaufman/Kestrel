@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -80,5 +81,26 @@ func TestRenderSnapshotShowsEmptyFleetAndAbsentReport(t *testing.T) {
 	absent := RenderSnapshot("/fake/home", availableHub(), tasks, nil)
 	if !strings.Contains(absent, "Direct Codex sessions have no durable Firstmate report.") {
 		t.Fatalf("absent report snapshot:\n%s", absent)
+	}
+}
+
+func TestRenderSnapshotSanitizesExternalTerminalControls(t *testing.T) {
+	tasks := sampleTasks()
+	tasks[0].Report.Content = "report \x1b[2Jkept"
+	tasks[0].Events[0].Raw = "event \x1b]0;owned\x07kept"
+	hub := availableHub()
+	hub.History = []string{"hub \x1b[31mstyled\x1b[0m\b kept"}
+	hub.Err = errors.New("failure \x1b[3Jkept")
+
+	snapshot := RenderSnapshot("/fake/\rhome", hub, tasks, []string{"live \x1b]52;c;payload\x07kept"})
+	for _, forbidden := range []string{"\x1b", "\x07", "\x08", "\r"} {
+		if strings.Contains(snapshot, forbidden) {
+			t.Fatalf("snapshot contains terminal control %q: %q", forbidden, snapshot)
+		}
+	}
+	for _, expected := range []string{"report kept", "event kept", "hub styled kept", "failure kept", "live kept"} {
+		if !strings.Contains(snapshot, expected) {
+			t.Fatalf("snapshot lost sanitized content %q:\n%s", expected, snapshot)
+		}
 	}
 }

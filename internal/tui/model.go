@@ -13,7 +13,10 @@ import (
 	"github.com/kunchenguid/firstmate/internal/firstmate"
 )
 
-const interactiveReadTimeout = 15 * time.Second
+const (
+	interactiveReadTimeout = 15 * time.Second
+	fleetRefreshTimeout    = 2 * time.Minute
+)
 
 // OutputMode selects the dominant output region.
 type OutputMode int
@@ -393,7 +396,7 @@ func (model Model) refresh() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), interactiveReadTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), fleetRefreshTimeout)
 		defer cancel()
 		tasks, err := model.source.Load(ctx)
 		if err != nil {

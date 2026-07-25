@@ -6,12 +6,14 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 const (
-	defaultStatusLines = 20
-	defaultStatusBytes = 64 * 1024
-	defaultReportBytes = 64 * 1024
+	defaultStatusLines  = 20
+	defaultStatusBytes  = 64 * 1024
+	defaultReportBytes  = 64 * 1024
+	defaultProbeTimeout = 15 * time.Second
 )
 
 // StateResolver owns current-state resolution for one task.
@@ -57,6 +59,7 @@ type Loader struct {
 	StatusMaxLines int
 	StatusMaxBytes int
 	ReportMaxBytes int
+	ProbeTimeout   time.Duration
 }
 
 func (loader Loader) Load(ctx context.Context) ([]Task, error) {
@@ -83,10 +86,16 @@ func (loader Loader) Load(ctx context.Context) ([]Task, error) {
 	if reportBytes <= 0 {
 		reportBytes = defaultReportBytes
 	}
+	probeTimeout := loader.ProbeTimeout
+	if probeTimeout <= 0 {
+		probeTimeout = defaultProbeTimeout
+	}
 
 	tasks := make([]Task, 0, len(metas))
 	for _, meta := range metas {
-		current, stateErr := loader.States.Resolve(ctx, meta.ID)
+		stateCtx, cancelState := context.WithTimeout(ctx, probeTimeout)
+		current, stateErr := loader.States.Resolve(stateCtx, meta.ID)
+		cancelState()
 		if stateErr != nil {
 			current = CurrentState{
 				State:  "unknown",
@@ -94,7 +103,9 @@ func (loader Loader) Load(ctx context.Context) ([]Task, error) {
 				Detail: stateErr.Error(),
 			}
 		}
-		agentState, agentErr := loader.Agents.ResolveAgentState(ctx, meta.ID)
+		agentCtx, cancelAgent := context.WithTimeout(ctx, probeTimeout)
+		agentState, agentErr := loader.Agents.ResolveAgentState(agentCtx, meta.ID)
+		cancelAgent()
 		if agentErr != nil || agentState != "alive" || isTerminalState(current.State) {
 			continue
 		}

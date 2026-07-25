@@ -15,7 +15,7 @@ import (
 	"github.com/kunchenguid/firstmate/internal/tui"
 )
 
-const commandTimeout = 30 * time.Second
+const commandTimeout = 2 * time.Minute
 
 type options struct {
 	home       string

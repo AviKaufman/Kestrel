@@ -9,6 +9,10 @@ import (
 
 // RenderSnapshot emits an ANSI-free, stable review and test surface.
 func RenderSnapshot(home string, hub HubState, tasks []firstmate.Task, live []string) string {
+	home = safeText(home)
+	hub = safeHub(hub)
+	tasks = safeTasks(tasks)
+	live = safeLines(live)
 	var output strings.Builder
 	managed := countOwnership(tasks, firstmate.FirstmateManaged)
 	private := countOwnership(tasks, firstmate.CaptainPrivate)
@@ -22,13 +26,13 @@ func RenderSnapshot(home string, hub HubState, tasks []firstmate.Task, live []st
 	)
 	fmt.Fprintln(&output, "active destination: Firstmate hub")
 	if hub.Err != nil {
-		fmt.Fprintf(&output, "hub: unavailable: %s\n", hub.Err)
+		fmt.Fprintf(&output, "hub: unavailable: %s\n", safeText(hub.Err.Error()))
 	} else {
 		fmt.Fprintf(&output, "hub: %s %s\n", valueOrDash(hub.Target.Backend), valueOrDash(hub.Target.Target))
 	}
 	fmt.Fprintln(&output, "HUB CONVERSATION (bounded; read-only)")
 	if hub.HistoryErr != nil {
-		fmt.Fprintf(&output, "history unavailable: %s\n", hub.HistoryErr)
+		fmt.Fprintf(&output, "history unavailable: %s\n", safeText(hub.HistoryErr.Error()))
 	} else if len(hub.History) == 0 {
 		fmt.Fprintln(&output, "No hub conversation capture available.")
 	} else {

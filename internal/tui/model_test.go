@@ -731,6 +731,41 @@ func TestModelLiveViewLabelsEventsAsHistory(t *testing.T) {
 	}
 }
 
+func TestModelViewSanitizesExternalControlsBeforeStyling(t *testing.T) {
+	tasks := sampleTasks()
+	tasks[0].Current.Detail = "detail \x1b[2Jkept"
+	tasks[0].Report.Content = "report \x1b]0;owned\x07kept"
+	hub := availableHub()
+	hub.History = []string{"history \x1b[31mstyled\x1b[0m\b kept"}
+	model := NewModel("/fake/\rhome", hub, tasks, []string{"live \x1b]52;c;payload\x07kept"}, fakeSource{tasks: tasks})
+
+	content := model.View().Content
+	for _, forbidden := range []string{"\x1b[2J", "\x1b]0;owned", "\x1b]52;c;payload", "\x07", "\x08", "\r"} {
+		if strings.Contains(content, forbidden) {
+			t.Fatalf("view contains external terminal control %q: %q", forbidden, content)
+		}
+	}
+	plain := ansi.Strip(content)
+	for _, expected := range []string{"history styled kept", "/fake/home"} {
+		if !strings.Contains(plain, expected) {
+			t.Fatalf("view lost sanitized content %q:\n%s", expected, plain)
+		}
+	}
+
+	model = updateModel(t, model, keyPress("2"))
+	report := model.View().Content
+	if strings.Contains(report, "\x1b]0;owned") || strings.Contains(report, "\x07") ||
+		!strings.Contains(ansi.Strip(report), "report kept") {
+		t.Fatalf("report view did not sanitize external content: %q", report)
+	}
+	model.outputMode = LiveMode
+	live := model.View().Content
+	if strings.Contains(live, "\x1b]52;c;payload") || strings.Contains(live, "\x07") ||
+		!strings.Contains(ansi.Strip(live), "live kept") {
+		t.Fatalf("live view did not sanitize external content: %q", live)
+	}
+}
+
 func sampleTasks() []firstmate.Task {
 	return []firstmate.Task{
 		{

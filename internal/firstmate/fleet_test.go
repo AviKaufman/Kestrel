@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 type fakeStateResolver struct {
@@ -36,6 +38,26 @@ type fakeAgentStateResolver struct {
 
 func (resolver fakeAgentStateResolver) ResolveAgentState(_ context.Context, taskID string) (string, error) {
 	return resolver.states[taskID], nil
+}
+
+type deadlineStateResolver struct {
+	mu        sync.Mutex
+	remaining map[string]time.Duration
+}
+
+func (resolver *deadlineStateResolver) Resolve(ctx context.Context, taskID string) (CurrentState, error) {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return CurrentState{}, errors.New("probe deadline is missing")
+	}
+	resolver.mu.Lock()
+	resolver.remaining[taskID] = time.Until(deadline)
+	resolver.mu.Unlock()
+	if taskID == "a-slow" {
+		<-ctx.Done()
+		return CurrentState{}, ctx.Err()
+	}
+	return CurrentState{State: "working", Source: "test"}, nil
 }
 
 type fakeDirectSessionSource struct {
@@ -204,6 +226,37 @@ func TestLoaderShowsOnlyActiveManagedWorkersAndDirectSessions(t *testing.T) {
 	}
 	if tasks[1].Metadata.ID != "private:notes.0" || tasks[1].Ownership != CaptainPrivate {
 		t.Fatalf("tasks[1] = %#v", tasks[1])
+	}
+}
+
+func TestLoaderGivesEachManagedProbeAFreshBudget(t *testing.T) {
+	home := fixtureHome(t)
+	for _, id := range []string{"a-slow", "b-later"} {
+		writeFile(t, filepath.Join(home.StateDir, id+".meta"), "kind=ship\n")
+	}
+	states := &deadlineStateResolver{remaining: make(map[string]time.Duration)}
+	loader := Loader{
+		Home:           home,
+		States:         states,
+		Agents:         fakeAgentStateResolver{states: map[string]string{"a-slow": "alive", "b-later": "alive"}},
+		ProbeTimeout:   20 * time.Millisecond,
+		StatusMaxLines: 20,
+		StatusMaxBytes: 1024,
+		ReportMaxBytes: 1024,
+	}
+
+	tasks, err := loader.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tasks) != 2 || tasks[1].Metadata.ID != "b-later" {
+		t.Fatalf("Load() tasks = %#v, want both probes to complete", tasks)
+	}
+	states.mu.Lock()
+	laterBudget := states.remaining["b-later"]
+	states.mu.Unlock()
+	if laterBudget < 10*time.Millisecond {
+		t.Fatalf("later probe budget = %s, want a fresh per-task deadline", laterBudget)
 	}
 }
 
