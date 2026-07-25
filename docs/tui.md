@@ -1,9 +1,9 @@
 # Firstmate TUI
 
-`fm-tui` is an opt-in terminal view and selected-worker message surface over one Firstmate operational home.
-The first slice lists active workers, resolves managed current state through `bin/fm-crew-state.sh`, shows durable reports, and shows bounded status-event and worker-capture output.
-It can send one bounded message to the selected active worker.
-It does not launch tasks, attach panes, edit policy, merge work, or change Firstmate lifecycle state.
+`fm-tui` is an opt-in terminal hub, worker view, and bounded message surface over one Firstmate operational home.
+The first slice keeps the Firstmate hub available with zero workers, separates active managed workers from captain-private Codex threads, resolves managed current state through `bin/fm-crew-state.sh`, shows durable reports, and shows bounded status-event and worker-capture output.
+It can send one bounded message to the hub or selected active worker and can create a captain-private Codex thread.
+It does not launch Firstmate-managed tasks, steer lifecycle state, attach panes, edit policy, merge work, or write task metadata.
 
 ## Run
 
@@ -16,6 +16,8 @@ go run ./cmd/fm-tui --home /absolute/path/to/firstmate-home
 `--home` takes precedence over `FM_HOME`.
 When both are absent, the code root is used as the operational home.
 Use `--root` when the Firstmate scripts come from a different code root.
+Use `--private-cwd /absolute/project/path` to choose the only working directory accepted by the private-thread creation action.
+When `--private-cwd` is absent, the code root is used.
 
 In a managed worktree where Go cannot derive repository metadata from Git's shared directory, add `-buildvcs=false` immediately after `go run`.
 
@@ -27,15 +29,17 @@ The snapshot mode prints stable, ANSI-free output for tests and review:
 go run ./cmd/fm-tui --snapshot --home /absolute/path/to/firstmate-home
 ```
 
-The output orders Firstmate-managed workers by task id, then captain-private Direct Codex sessions by target, and selects the first worker for the inspector.
-It includes ownership, send route, the durable report view, and bounded live sources without sending a message.
+The output shows the compact header, active Firstmate hub destination, hub authority, separate managed and private counts, all three send routes, the non-executing `n` action, and the worker inspector.
+It orders Firstmate-managed workers by task id, then captain-private Direct Codex sessions by target.
+Snapshot mode never sends a message or launches a thread.
 
-## Ownership and active filtering
+## Destinations, ownership, and active filtering
 
-The selector and selected-worker header always identify one of two ownership groups.
+The compact header exposes three destinations.
 
-- `Firstmate managed` means the worker is backed by this home's metadata, current-state adapter, and recovery-grade backend agent-state probe.
-- `Captain private / Direct Codex` means a live tmux Codex pane is not claimed by any Firstmate metadata window.
+- `Firstmate hub` is persistent and routes to the current primary supervisor target resolved by `bin/fm-supervisor-target-lib.sh` and revalidated through `bin/fm-tui-hub.sh`.
+- `Managed workers` contains only workers backed by this home's metadata, current-state adapter, and recovery-grade backend agent-state probe.
+- `Private Codex` contains only live tmux Codex panes not claimed by any Firstmate metadata window.
 
 Managed records are visible only while their backend agent state is `alive` and their authoritative current state is nonterminal.
 Done, failed, cancelled, missing, dead, and stale metadata or status-only records are excluded.
@@ -49,13 +53,16 @@ Direct discovery is tmux-only in this slice and does not attempt to discover Cod
 
 | Key | Action |
 | --- | --- |
-| `j`, `down` | Select the next task |
-| `k`, `up` | Select the previous task |
-| `g`, `G` | Select the first or last task |
+| `tab`, `shift-tab` | Select the next or previous top-level destination |
+| `1`, `2`, `3` | Select Firstmate hub, Managed workers, or Private Codex |
+| `j`, `down` | Select the next worker within the active worker destination |
+| `k`, `up` | Select the previous worker within the active worker destination |
+| `g`, `G` | Select the first or last worker within the active worker destination |
 | `left`, `right` | Show Reports or Live |
 | `enter` | Switch between Reports and Live, or send while the composer is focused |
-| `esc` | Close help, blur the composer without clearing its draft, or return to Reports |
-| `i` | Focus the selected-worker message composer |
+| `esc` | Close help, cancel private creation, blur the composer without clearing its draft, or return to Reports |
+| `i` | Focus the active hub or selected-worker message composer |
+| `n` | Open the contained new-private-Codex label prompt |
 | `r` | Refresh metadata, current state, reports, events, and the selected live capture |
 | `?` | Toggle keyboard help |
 | `q` | Quit |
@@ -67,21 +74,33 @@ Private Direct Codex capture comes through `bin/fm-tui-direct.sh`.
 
 ## Message composer
 
-The compact composer remains visible below the dominant Reports or Live output.
-Press `i`, type a message, and press `enter` to send only to the selected active worker.
+The compact composer remains visible below the dominant Reports or Live output for worker destinations and in the persistent hub view.
+Press `i`, type a message, and press `enter` to send only to the active hub or selected worker.
 The message is limited to 4096 bytes.
 Empty, oversized, invalid-target, and mismatched-ownership submissions are rejected before adapter execution.
 Adapter commands receive the target and message as separate arguments and run with timeouts and bounded output.
 
 Firstmate-managed messages route through `bin/fm-send.sh`, preserving its target resolution, submission checks, secondmate markers, pending-reply records, and audit behavior.
 Captain-private messages route separately through `bin/fm-tui-direct.sh`, which revalidates that the exact tmux pane is live, runs Codex, and is not claimed by Firstmate metadata.
+Hub messages route through `bin/fm-tui-hub.sh`, which resolves the established primary supervisor authority and requires the same live backend target immediately before submission.
 A successful send clears the submitted draft.
 A failed send leaves the draft intact and displays the adapter error in the TUI.
+
+## Private Codex creation
+
+Press `n` from any destination to open a contained label prompt.
+Labels must match `[a-z0-9][a-z0-9-]{0,31}`.
+The working directory is the validated absolute `--private-cwd` value and is never accepted from the prompt.
+The adapter reuses the current tmux session when the TUI runs inside tmux and otherwise uses the dedicated `firstmate-private` session.
+It creates a pinned `codex-<label>` window, launches the installed `codex` command with fixed tmux arguments, writes no `state/*.meta`, and revalidates the concrete Codex pane before returning it.
+The TUI then rediscovers the pane and selects it under Private Codex.
+Launch or rediscovery failure leaves the prior destination intact, preserves the label for correction, and never fabricates a worker selection.
+Private creation is tmux-only in this slice.
 
 ## Bounds and errors
 
 Metadata is read from sorted `state/*.meta` files.
 Status history defaults to 20 events and a 64 KiB byte bound per task.
 Reports default to a 64 KiB byte bound.
-Read and send adapter output is capped.
+Read, send, and create adapter output is capped.
 Read adapter failures are shown as unavailable or unknown rather than replaced with a status-log guess.
