@@ -49,6 +49,8 @@ type Loader struct {
 	Agents         AgentStateResolver
 	Live           LiveReader
 	Direct         DirectSessionSource
+	DirectCreate   PrivateSessionCreator
+	PrivateWorkdir string
 	ManagedSend    MessageSender
 	DirectSend     MessageSender
 	Hub            HubAdapter

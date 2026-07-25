@@ -3,6 +3,8 @@ package firstmate
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -17,6 +19,7 @@ const (
 )
 
 var directTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+\.[0-9]+$`)
+var privateLabelPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,31}$`)
 
 // AgentStateResolver returns the recovery-grade live agent state for a task.
 type AgentStateResolver interface {
@@ -33,6 +36,11 @@ type DirectSession struct {
 type DirectSessionSource interface {
 	Discover(context.Context, []Metadata) ([]DirectSession, error)
 	Read(context.Context, string) ([]string, error)
+}
+
+// PrivateSessionCreator starts one captain-private Codex session.
+type PrivateSessionCreator interface {
+	Create(context.Context, string, string) (DirectSession, error)
 }
 
 // ParseDirectSessions parses target<TAB>project records in stable target order.
@@ -58,6 +66,35 @@ func ParseDirectSessions(output string) ([]DirectSession, error) {
 		return sessions[left].Target < sessions[right].Target
 	})
 	return sessions, nil
+}
+
+// CreatePrivate validates a bounded label and explicit directory before launch.
+func (loader Loader) CreatePrivate(ctx context.Context, label string) (DirectSession, error) {
+	if loader.DirectCreate == nil {
+		return DirectSession{}, fmt.Errorf("private-session creator is required")
+	}
+	if !privateLabelPattern.MatchString(label) {
+		return DirectSession{}, fmt.Errorf("private label must match %s", privateLabelPattern)
+	}
+	workdir := loader.PrivateWorkdir
+	if !filepath.IsAbs(workdir) || strings.ContainsAny(workdir, "\r\n\t") {
+		return DirectSession{}, fmt.Errorf("private working directory must be an absolute path")
+	}
+	info, err := os.Stat(workdir)
+	if err != nil {
+		return DirectSession{}, fmt.Errorf("private working directory %q is unavailable: %w", workdir, err)
+	}
+	if !info.IsDir() {
+		return DirectSession{}, fmt.Errorf("private working directory %q is not a directory", workdir)
+	}
+	session, err := loader.DirectCreate.Create(ctx, label, workdir)
+	if err != nil {
+		return DirectSession{}, err
+	}
+	if !directTargetPattern.MatchString(session.Target) || session.Project != workdir {
+		return DirectSession{}, fmt.Errorf("private-session adapter returned an invalid created session %#v", session)
+	}
+	return session, nil
 }
 
 func isTerminalState(state string) bool {

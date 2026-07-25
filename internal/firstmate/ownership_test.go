@@ -82,3 +82,97 @@ func TestParseDirectSessionsRejectsMalformedOrDuplicateTargets(t *testing.T) {
 		})
 	}
 }
+
+func TestShellDirectSessionSourceCreatesWithExactArguments(t *testing.T) {
+	root := t.TempDir()
+	workdir := filepath.Join(root, "project")
+	if err := os.Mkdir(workdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	logPath := filepath.Join(root, "argv.log")
+	script := writeAdapter(t, root, "direct-create", `printf '%s|%s|%s|%s\n' "$1" "$2" "$3" "$#" > "$ADAPTER_LOG"
+printf 'private:codex-notes.0\t%s\n' "$3"`)
+	source := ShellDirectSessionSource{
+		Path:     script,
+		Home:     Home{Root: "/fake/home", StateDir: "/fake/home/state"},
+		ExtraEnv: []string{"ADAPTER_LOG=" + logPath},
+	}
+
+	session, err := source.Create(context.Background(), "notes", workdir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if session.Target != "private:codex-notes.0" || session.Project != workdir {
+		t.Fatalf("Create() = %#v", session)
+	}
+	logBytes, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(logBytes) != "create|notes|"+workdir+"|3\n" {
+		t.Fatalf("adapter argv = %q", logBytes)
+	}
+}
+
+func TestShellDirectSessionSourceRejectsInvalidCreatedTarget(t *testing.T) {
+	root := t.TempDir()
+	script := writeAdapter(t, root, "direct-create-invalid", `printf 'not-a-target\t%s\n' "$3"`)
+	source := ShellDirectSessionSource{
+		Path: script,
+		Home: Home{Root: "/fake/home", StateDir: "/fake/home/state"},
+	}
+	if _, err := source.Create(context.Background(), "notes", root); err == nil {
+		t.Fatal("Create() accepted invalid adapter output")
+	}
+}
+
+func TestCreatePrivateValidatesLabelPathAndAdapterRecord(t *testing.T) {
+	workdir := t.TempDir()
+	creator := &recordingPrivateCreator{
+		session: DirectSession{Target: "private:codex-notes.0", Project: workdir},
+	}
+	loader := Loader{DirectCreate: creator, PrivateWorkdir: workdir}
+
+	session, err := loader.CreatePrivate(context.Background(), "notes-2")
+	if err != nil || session != creator.session {
+		t.Fatalf("CreatePrivate() = %#v, %v", session, err)
+	}
+	if creator.label != "notes-2" || creator.workdir != workdir {
+		t.Fatalf("creator args = %q, %q", creator.label, creator.workdir)
+	}
+
+	for _, test := range []struct {
+		name    string
+		label   string
+		workdir string
+	}{
+		{name: "unsafe label", label: "bad;label", workdir: workdir},
+		{name: "relative path", label: "notes", workdir: "relative"},
+		{name: "missing path", label: "notes", workdir: filepath.Join(workdir, "missing")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			testLoader := loader
+			testLoader.PrivateWorkdir = test.workdir
+			if _, err := testLoader.CreatePrivate(context.Background(), test.label); err == nil {
+				t.Fatal("CreatePrivate() error = nil")
+			}
+		})
+	}
+
+	creator.session.Project = filepath.Join(workdir, "other")
+	if _, err := loader.CreatePrivate(context.Background(), "notes"); err == nil {
+		t.Fatal("CreatePrivate() accepted mismatched adapter project")
+	}
+}
+
+type recordingPrivateCreator struct {
+	label   string
+	workdir string
+	session DirectSession
+}
+
+func (creator *recordingPrivateCreator) Create(_ context.Context, label, workdir string) (DirectSession, error) {
+	creator.label = label
+	creator.workdir = workdir
+	return creator.session, nil
+}

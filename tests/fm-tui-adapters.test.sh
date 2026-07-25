@@ -27,6 +27,7 @@ cat > "$FAKEBIN/tmux" <<'EOF'
 set -eu
 printf '%s\n' "$*" >> "$FM_TMUX_LOG"
 case "$1" in
+  has-session) exit 0 ;;
   list-panes)
     printf 'fleet\tfm-managed\t0\tcodex\t/worktrees/managed\n'
     printf 'private\tnotes\t0\tcodex\t/projects/notes\n'
@@ -46,10 +47,16 @@ case "$1" in
       *session_name*)
         case "$target" in
           private:notes.0) printf 'private\tnotes\t0\tcodex\t/projects/notes\n' ;;
+          private:codex-notes.0|%7)
+            command=codex
+            [ "${FM_BAD_CREATE:-0}" != 1 ] || command=zsh
+            printf 'private\tcodex-notes\t0\t%s\t%s\n' "$command" "$FM_PRIVATE_TEST_CWD"
+            ;;
           fleet:fm-managed.0) printf 'fleet\tfm-managed\t0\tcodex\t/worktrees/managed\n' ;;
           *) exit 1 ;;
         esac
         ;;
+      '#S') printf 'private\n' ;;
       *cursor_y*) printf '0\n' ;;
       *pane_current_command*) printf 'codex\n' ;;
       *pane_id*)
@@ -58,6 +65,12 @@ case "$1" in
         ;;
     esac
     ;;
+  new-window)
+    [ "${FM_FAIL_CREATE:-0}" != 1 ] || exit 1
+    printf '%%7\n'
+    ;;
+  set-window-option) ;;
+  kill-window) ;;
   capture-pane)
     case " $* " in
       *" -e "*) printf '›\n' ;;
@@ -69,6 +82,11 @@ case "$1" in
 esac
 EOF
 chmod +x "$FAKEBIN/tmux" "$ROOT/bin/fm-tui-agent-state.sh" "$ROOT/bin/fm-tui-direct.sh" "$ROOT/bin/fm-tui-hub.sh"
+cat > "$FAKEBIN/codex" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$FAKEBIN/codex"
 
 common_env=(
   "PATH=$FAKEBIN:$PATH"
@@ -125,5 +143,38 @@ if env "${common_env[@]}" FM_SUPERVISOR_BACKEND= FM_SUPERVISOR_TARGET= TMUX_PANE
   "$ROOT/bin/fm-tui-hub.sh" resolve >/dev/null 2>&1; then
   fail "hub adapter accepted the ambiguous legacy fallback"
 fi
+
+PRIVATE_CWD="$TMP_ROOT/private-project"
+mkdir -p "$PRIVATE_CWD"
+meta_count_before=$(find "$HOME_DIR/state" -name '*.meta' -type f | wc -l)
+created=$(env "${common_env[@]}" TMUX=/tmp/fake FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" \
+  "$ROOT/bin/fm-tui-direct.sh" create notes "$PRIVATE_CWD")
+[ "$created" = "private:codex-notes.0	$PRIVATE_CWD" ] \
+  || fail "private create = '$created'"
+meta_count_after=$(find "$HOME_DIR/state" -name '*.meta' -type f | wc -l)
+[ "$meta_count_after" -eq "$meta_count_before" ] \
+  || fail "private create wrote Firstmate metadata"
+grep -F -- "new-window -dP -F #{pane_id} -t private: -n codex-notes -c $PRIVATE_CWD" "$LOG" >/dev/null \
+  || fail "private create did not use the expected tmux argv"
+
+if env "${common_env[@]}" TMUX=/tmp/fake FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" \
+  "$ROOT/bin/fm-tui-direct.sh" create 'bad;label' "$PRIVATE_CWD" >/dev/null 2>&1; then
+  fail "private create accepted an unsafe label"
+fi
+if env "${common_env[@]}" TMUX=/tmp/fake FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" \
+  "$ROOT/bin/fm-tui-direct.sh" create notes relative/path >/dev/null 2>&1; then
+  fail "private create accepted a relative path"
+fi
+if env "${common_env[@]}" TMUX=/tmp/fake FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" FM_FAIL_CREATE=1 \
+  "$ROOT/bin/fm-tui-direct.sh" create notes "$PRIVATE_CWD" >/dev/null 2>&1; then
+  fail "private create ignored a tmux launch failure"
+fi
+if env "${common_env[@]}" TMUX=/tmp/fake FM_PRIVATE_TEST_CWD="$PRIVATE_CWD" FM_BAD_CREATE=1 \
+  FM_TUI_CREATE_RETRIES=1 FM_TUI_CREATE_SLEEP=0 \
+  "$ROOT/bin/fm-tui-direct.sh" create notes "$PRIVATE_CWD" >/dev/null 2>&1; then
+  fail "private create exposed a pane that failed Codex revalidation"
+fi
+grep -F -- "kill-window -t %7" "$LOG" >/dev/null \
+  || fail "private create did not roll back a pane that failed revalidation"
 
 echo "PASS: fm-tui adapters enforce managed ownership and private Codex routing"

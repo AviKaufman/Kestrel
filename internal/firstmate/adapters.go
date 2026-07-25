@@ -227,6 +227,30 @@ func (source ShellDirectSessionSource) Read(ctx context.Context, target string) 
 	return rawLines, nil
 }
 
+// Create starts one private session through the direct-session adapter.
+func (source ShellDirectSessionSource) Create(ctx context.Context, label, workdir string) (DirectSession, error) {
+	stdout, stderr, truncated, err := runBounded(
+		ctx,
+		source.Path,
+		[]string{"create", label, workdir},
+		adapterEnvironment(source.Home, source.ExtraEnv),
+	)
+	if err != nil {
+		return DirectSession{}, fmt.Errorf("create private Codex session: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	if truncated {
+		return DirectSession{}, fmt.Errorf("create private Codex session: adapter output exceeded %d bytes", adapterOutputLimit)
+	}
+	sessions, err := ParseDirectSessions(stdout)
+	if err != nil {
+		return DirectSession{}, err
+	}
+	if len(sessions) != 1 {
+		return DirectSession{}, fmt.Errorf("private-session adapter returned %d created sessions, want one", len(sessions))
+	}
+	return sessions[0], nil
+}
+
 func (reader ShellLiveReader) Read(ctx context.Context, taskID string) ([]string, error) {
 	lines := reader.Lines
 	if lines <= 0 {
