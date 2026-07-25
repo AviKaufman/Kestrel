@@ -15,7 +15,7 @@ type HubTarget struct {
 	Target  string
 }
 
-// HubAdapter resolves and sends to the current primary supervisor.
+// HubAdapter resolves, reads, and sends to the current primary supervisor.
 type HubAdapter interface {
 	Resolve(context.Context) (HubTarget, error)
 	Read(context.Context, HubTarget) ([]string, error)

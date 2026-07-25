@@ -1,7 +1,7 @@
 # Firstmate TUI
 
 `fm-tui` is an opt-in terminal hub, worker view, and bounded message surface over one Firstmate operational home.
-The first slice keeps the Firstmate hub available with zero workers, separates active managed workers from captain-private Codex threads, resolves managed current state through `bin/fm-crew-state.sh`, shows durable reports, and shows bounded status-event and worker-capture output.
+The first slice keeps the Firstmate hub available with zero workers, separates active managed workers from captain-private Codex threads, resolves managed current state through `bin/fm-crew-state.sh`, shows durable reports, and shows bounded hub, status-event, and worker-capture output.
 It can send one bounded message to the hub or selected active worker and can create a captain-private Codex thread.
 It does not launch Firstmate-managed tasks, steer lifecycle state, attach panes, edit policy, merge work, or write task metadata.
 
@@ -29,7 +29,7 @@ The snapshot mode prints stable, ANSI-free output for tests and review:
 go run ./cmd/fm-tui --snapshot --home /absolute/path/to/firstmate-home
 ```
 
-The output shows the compact header, active Firstmate hub destination, hub authority, separate managed and private counts, all three send routes, the non-executing `n` action, and the worker inspector.
+The output shows the compact header, active Firstmate hub destination, hub authority and bounded conversation history, separate managed and private counts, all three send routes, the non-executing `n` action, and the worker inspector.
 It orders Firstmate-managed workers by task id, then captain-private Direct Codex sessions by target.
 Snapshot mode never sends a message or launches a thread.
 
@@ -49,6 +49,10 @@ Direct discovery uses a bounded tmux pane inventory and the established `pane_cu
 It excludes every tmux window claimed by `state/*.meta` before rendering or sending.
 Direct discovery is tmux-only in this slice and does not attempt to discover Codex Desktop threads or private sessions on other backends.
 
+Hub resolution first honors explicit inherited supervisor authority.
+When an active primary TUI process lacks those markers, it can recover the same authority from the live session-lock owner's whitelisted environment without scanning tmux inventory.
+That recovery requires a readable Linux `/proc/<pid>/environ`; inherited authority remains the portable path on other systems.
+
 ## Keys
 
 | Key | Action |
@@ -63,7 +67,7 @@ Direct discovery is tmux-only in this slice and does not attempt to discover Cod
 | `esc` | Close help, cancel private creation, blur the composer without clearing its draft, or return to Reports |
 | `i` | Focus the active hub or selected-worker message composer |
 | `n` | Open the contained new-private-Codex label prompt |
-| `r` | Refresh metadata, current state, reports, events, and the selected live capture |
+| `r` | Refresh metadata, hub history, current state, reports, events, and the selected live capture |
 | `?` | Toggle keyboard help |
 | `q` | Quit |
 
@@ -75,6 +79,7 @@ Private Direct Codex capture comes through `bin/fm-tui-direct.sh`.
 ## Message composer
 
 The compact composer remains visible below the dominant Reports or Live output for worker destinations and in the persistent hub view.
+The hub view keeps compact destination and target identity at the top, gives the bounded read-only conversation capture the dominant region, and anchors its composer at the bottom.
 Press `i`, type a message, and press `enter` to send only to the active hub or selected worker.
 The message is limited to 4096 bytes.
 Empty, oversized, invalid-target, and mismatched-ownership submissions are rejected before adapter execution.
@@ -83,6 +88,7 @@ Adapter commands receive the target and message as separate arguments and run wi
 Firstmate-managed messages route through `bin/fm-send.sh`, preserving its target resolution, submission checks, secondmate markers, pending-reply records, and audit behavior.
 Captain-private messages route separately through `bin/fm-tui-direct.sh`, which revalidates that the exact tmux pane is live, runs Codex, and is not claimed by Firstmate metadata.
 Hub messages route through `bin/fm-tui-hub.sh`, which resolves the established primary supervisor authority and requires the same live backend target immediately before submission.
+Hub history uses the same resolve-and-revalidate path before a bounded backend capture, so stale authority is never read as the current conversation.
 A successful send clears the submitted draft.
 A failed send leaves the draft intact and displays the adapter error in the TUI.
 
@@ -101,6 +107,7 @@ Private creation is tmux-only in this slice.
 
 Metadata is read from sorted `state/*.meta` files.
 Status history defaults to 20 events and a 64 KiB byte bound per task.
+Hub conversation history defaults to the `--live-lines` bound and retains the newest available lines.
 Reports default to a 64 KiB byte bound.
 Read, send, and create adapter output is capped.
 Read adapter failures are shown as unavailable or unknown rather than replaced with a status-log guess.
