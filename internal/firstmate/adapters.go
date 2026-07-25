@@ -122,6 +122,45 @@ type ShellMessageSender struct {
 	ExtraEnv   []string
 }
 
+// ShellHubAdapter invokes the supervisor-target adapter with bounded output.
+type ShellHubAdapter struct {
+	Path     string
+	Home     Home
+	ExtraEnv []string
+}
+
+func (adapter ShellHubAdapter) Resolve(ctx context.Context) (HubTarget, error) {
+	stdout, stderr, truncated, err := runBounded(
+		ctx,
+		adapter.Path,
+		[]string{"resolve"},
+		adapterEnvironment(adapter.Home, adapter.ExtraEnv),
+	)
+	if err != nil {
+		return HubTarget{}, fmt.Errorf("resolve Firstmate hub: %w: %s", err, strings.TrimSpace(stderr))
+	}
+	if truncated {
+		return HubTarget{}, fmt.Errorf("resolve Firstmate hub: adapter output exceeded %d bytes", adapterOutputLimit)
+	}
+	return ParseHubTarget(stdout)
+}
+
+func (adapter ShellHubAdapter) Send(ctx context.Context, target HubTarget, message string) error {
+	_, stderr, truncated, err := runBounded(
+		ctx,
+		adapter.Path,
+		[]string{"send", target.Backend, target.Target, message},
+		adapterEnvironment(adapter.Home, adapter.ExtraEnv),
+	)
+	if err != nil {
+		return fmt.Errorf("send to Firstmate hub %s: %w: %s", target.Target, err, strings.TrimSpace(stderr))
+	}
+	if truncated {
+		return fmt.Errorf("send to Firstmate hub %s: adapter output exceeded %d bytes", target.Target, adapterOutputLimit)
+	}
+	return nil
+}
+
 func (sender ShellMessageSender) Send(ctx context.Context, target, message string) error {
 	args := make([]string, 0, len(sender.PrefixArgs)+2)
 	args = append(args, sender.PrefixArgs...)

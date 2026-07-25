@@ -52,7 +52,10 @@ case "$1" in
         ;;
       *cursor_y*) printf '0\n' ;;
       *pane_current_command*) printf 'codex\n' ;;
-      *pane_id*) printf '%%1\n' ;;
+      *pane_id*)
+        [ "$target" != "%gone" ] || exit 1
+        printf '%%1\n'
+        ;;
     esac
     ;;
   capture-pane)
@@ -65,7 +68,7 @@ case "$1" in
   *) exit 1 ;;
 esac
 EOF
-chmod +x "$FAKEBIN/tmux" "$ROOT/bin/fm-tui-agent-state.sh" "$ROOT/bin/fm-tui-direct.sh"
+chmod +x "$FAKEBIN/tmux" "$ROOT/bin/fm-tui-agent-state.sh" "$ROOT/bin/fm-tui-direct.sh" "$ROOT/bin/fm-tui-hub.sh"
 
 common_env=(
   "PATH=$FAKEBIN:$PATH"
@@ -99,5 +102,28 @@ sent=$(env "${common_env[@]}" "$ROOT/bin/fm-tui-direct.sh" send private:notes.0 
 [ "$sent" = sent ] || fail "direct send = '$sent'"
 grep -F -- "send-keys -t private:notes.0 -l $message" "$LOG" >/dev/null \
   || fail "direct send did not preserve the literal message argument"
+
+hub=$(env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGET=%9 \
+  "$ROOT/bin/fm-tui-hub.sh" resolve)
+[ "$hub" = $'tmux\t%9' ] || fail "hub resolve = '$hub'"
+
+hub_sent=$(env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGET=%9 \
+  "$ROOT/bin/fm-tui-hub.sh" send tmux %9 "$message")
+[ "$hub_sent" = sent ] || fail "hub send = '$hub_sent'"
+grep -F -- "send-keys -t %9 -l $message" "$LOG" >/dev/null \
+  || fail "hub send did not preserve the literal message argument"
+
+if env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGET=%9 \
+  "$ROOT/bin/fm-tui-hub.sh" send tmux %8 hello >/dev/null 2>&1; then
+  fail "hub adapter did not revalidate a changed target"
+fi
+if env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGET=%gone \
+  "$ROOT/bin/fm-tui-hub.sh" resolve >/dev/null 2>&1; then
+  fail "hub adapter accepted a missing supervisor target"
+fi
+if env "${common_env[@]}" FM_SUPERVISOR_BACKEND= FM_SUPERVISOR_TARGET= TMUX_PANE= HERDR_ENV= \
+  "$ROOT/bin/fm-tui-hub.sh" resolve >/dev/null 2>&1; then
+  fail "hub adapter accepted the ambiguous legacy fallback"
+fi
 
 echo "PASS: fm-tui adapters enforce managed ownership and private Codex routing"

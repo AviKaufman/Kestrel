@@ -51,6 +51,7 @@ type Loader struct {
 	Direct         DirectSessionSource
 	ManagedSend    MessageSender
 	DirectSend     MessageSender
+	Hub            HubAdapter
 	StatusMaxLines int
 	StatusMaxBytes int
 	ReportMaxBytes int
