@@ -6,7 +6,9 @@ import (
 )
 
 func TestRenderSnapshotIsStableAndComplete(t *testing.T) {
-	snapshot := RenderSnapshot("/fake/home", availableHub(), sampleTasks(), []string{"bounded worker line"})
+	hub := availableHub()
+	hub.History = []string{"captain: status", "firstmate: under way"}
+	snapshot := RenderSnapshot("/fake/home", hub, sampleTasks(), []string{"bounded worker line"})
 
 	for _, expected := range []string{
 		"FIRSTMATE TUI SNAPSHOT",
@@ -16,6 +18,8 @@ func TestRenderSnapshotIsStableAndComplete(t *testing.T) {
 		"Managed workers: 1 | send route: fm-send.sh",
 		"Private Codex: 1 | send route: fm-tui-direct.sh",
 		"private create: n | launch route: fm-tui-direct.sh create",
+		"HUB CONVERSATION (bounded; read-only)",
+		"firstmate: under way",
 		"home: /fake/home",
 		"tasks: 2",
 		"Firstmate managed",

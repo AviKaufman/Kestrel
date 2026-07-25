@@ -25,10 +25,8 @@ var (
 	tabStyle    = lipgloss.NewStyle().Foreground(colorSubtle)
 	activeTab   = lipgloss.NewStyle().Bold(true).Foreground(colorFoam)
 	errorStyle  = lipgloss.NewStyle().Foreground(colorLove)
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(colorInk).
-			Background(lipgloss.Color("#26233a"))
+	colorHeader = lipgloss.Color("#26233a")
+	headerStyle = lipgloss.NewStyle().Background(colorHeader)
 )
 
 func (model Model) render() string {
@@ -39,13 +37,13 @@ func (model Model) render() string {
 	var body string
 	if width < 76 {
 		listHeight := min(5, max(3, bodyHeight/4))
-		list := renderDestinationList(model, width, listHeight)
+		list := renderDestinationList(model, width, listHeight, true)
 		inspector := renderInspector(model, width, max(6, bodyHeight-listHeight))
 		body = lipgloss.JoinVertical(lipgloss.Left, list, inspector)
 	} else {
 		leftWidth := max(24, width/4)
 		rightWidth := max(40, width-leftWidth)
-		list := renderDestinationList(model, leftWidth, bodyHeight)
+		list := renderDestinationList(model, leftWidth, bodyHeight, false)
 		inspector := renderInspector(model, rightWidth, bodyHeight)
 		body = lipgloss.JoinHorizontal(lipgloss.Top, list, inspector)
 	}
@@ -71,28 +69,45 @@ func renderHeader(model Model, width int) string {
 		}
 		return label
 	}
-	content := fmt.Sprintf(
-		" firstmate | 1 %s  2 %s %d  3 %s %d | workers %d | n new | home %s | ? help ",
-		tab(HubDestination, "HUB"),
-		tab(ManagedDestination, "MANAGED"),
-		managed,
-		tab(PrivateDestination, "PRIVATE"),
-		private,
-		len(model.tasks),
-		model.home,
-	)
+	identityStyle := lipgloss.NewStyle().Foreground(colorIris).Background(colorHeader).Bold(true)
+	navigationStyle := lipgloss.NewStyle().Foreground(colorFoam).Background(colorHeader).Bold(true)
+	statusStyle := lipgloss.NewStyle().Foreground(colorGold).Background(colorHeader).Bold(true)
+	actionStyle := lipgloss.NewStyle().Foreground(colorIris).Background(colorHeader)
+	contextStyle := lipgloss.NewStyle().Foreground(colorSubtle).Background(colorHeader)
+	separator := lipgloss.NewStyle().Foreground(colorMuted).Background(colorHeader).Render(" │ ")
+	content := " " + strings.Join([]string{
+		identityStyle.Render("firstmate"),
+		navigationStyle.Render(fmt.Sprintf(
+			"1 %s  2 %s %d  3 %s %d",
+			tab(HubDestination, "HUB"),
+			tab(ManagedDestination, "MANAGED"),
+			managed,
+			tab(PrivateDestination, "PRIVATE"),
+			private,
+		)),
+		statusStyle.Render(fmt.Sprintf("workers %d", len(model.tasks))),
+		actionStyle.Render("n new  ? help"),
+		contextStyle.Render("home " + model.home),
+	}, separator) + " "
 	return headerStyle.Width(width).Render(ansi.Truncate(content, width, "…"))
 }
 
-func renderDestinationList(model Model, width, height int) string {
+func renderDestinationList(model Model, width, height int, stacked bool) string {
 	innerWidth := max(1, width-2)
+	contentHeight := height
+	if stacked {
+		contentHeight--
+	} else {
+		innerWidth--
+	}
 	if model.destination == HubDestination {
 		lines := []string{
 			titleStyle.Render("FIRSTMATE"),
 			focusStyle.Render("> Firstmate hub"),
 			labelStyle.Render("  primary supervisor"),
 		}
-		return panelStyle(width, height).Render(fitBlock(strings.Join(lines, "\n"), innerWidth, max(1, height-2)))
+		return selectorPaneStyle(width, height, stacked).
+			Render(fitBlock(strings.Join(lines, "\n"), innerWidth, max(1, contentHeight)))
 	}
 	tasks := model.destinationTasks()
 	title := "MANAGED WORKERS"
@@ -122,7 +137,8 @@ func renderDestinationList(model Model, width, height int) string {
 			lines = append(lines, labelStyle.Render(ansi.Truncate(detail, innerWidth, "…")))
 		}
 	}
-	return panelStyle(width, height).Render(fitBlock(strings.Join(lines, "\n"), innerWidth, max(1, height-2)))
+	return selectorPaneStyle(width, height, stacked).
+		Render(fitBlock(strings.Join(lines, "\n"), innerWidth, max(1, contentHeight)))
 }
 
 func renderInspector(model Model, width, height int) string {
@@ -136,7 +152,7 @@ func renderInspector(model Model, width, height int) string {
 		if model.destination == PrivateDestination {
 			empty = "No active private Codex threads."
 		}
-		return panelStyle(width, height).Render(labelStyle.Render(empty))
+		return contentPaneStyle(width, height).Render(labelStyle.Render(empty))
 	}
 	task := tasks[model.selected]
 	meta := task.Metadata
@@ -200,7 +216,7 @@ func renderInspector(model Model, width, height int) string {
 	availableOutputHeight := max(3, height-2-lipgloss.Height(headerContent)-lipgloss.Height(composer)-2)
 	output = fitBlock(ansi.Hardwrap(output, innerWidth, false), innerWidth, availableOutputHeight)
 	content := headerContent + "\n\n" + output + "\n" + composer
-	return panelStyle(width, height).Render(fitBlock(content, innerWidth, max(1, height-2)))
+	return contentPaneStyle(width, height).Render(fitBlock(content, innerWidth, max(1, height)))
 }
 
 func ownershipStyle(ownership firstmate.Ownership) lipgloss.Style {
@@ -247,19 +263,26 @@ func renderHubInspector(model Model, width, height int) string {
 	innerWidth := max(1, width-2)
 	target := fmt.Sprintf("%s %s", valueOrDash(model.hub.Target.Backend), valueOrDash(model.hub.Target.Target))
 	if model.hub.Err != nil {
-		target = errorStyle.Render("unavailable: " + model.hub.Err.Error())
+		target = errorStyle.Render(ansi.Truncate("unavailable: "+model.hub.Err.Error(), max(1, innerWidth-7), "…"))
 	}
-	content := strings.Join([]string{
+	history := []string{labelStyle.Render("HUB CONVERSATION (bounded; read-only)")}
+	if model.hub.HistoryErr != nil {
+		history = append(history, errorStyle.Render("history unavailable: "+model.hub.HistoryErr.Error()))
+	} else if len(model.hub.History) == 0 {
+		history = append(history, "No hub conversation capture available.")
+	} else {
+		history = append(history, model.hub.History...)
+	}
+	identity := strings.Join([]string{
 		titleStyle.Render("FIRSTMATE HUB"),
 		labelStyle.Render("DESTINATION") + " primary supervisor session",
 		labelStyle.Render("TARGET") + " " + target,
-		"",
-		"Send a message to the active Firstmate supervisor.",
-		"No worker selection is required.",
-		"",
-		renderComposerWithLabel(model, "Firstmate hub", innerWidth),
 	}, "\n")
-	return panelStyle(width, height).Render(fitBlock(content, innerWidth, max(1, height-2)))
+	composer := renderComposerWithLabel(model, "Firstmate hub", innerWidth)
+	historyHeight := max(3, height-lipgloss.Height(identity)-lipgloss.Height(composer))
+	historyContent := fitHistory(strings.Join(history, "\n"), innerWidth, historyHeight)
+	content := identity + "\n" + historyContent + "\n" + composer
+	return contentPaneStyle(width, height).Render(fitBlock(content, innerWidth, height))
 }
 
 func renderReport(task firstmate.Task) string {
@@ -389,14 +412,24 @@ func padLine(line string, width int) string {
 	return ansi.Truncate(line, width, "")
 }
 
-func panelStyle(width, height int) lipgloss.Style {
-	contentWidth := max(1, width-2)
-	contentHeight := max(1, height-2)
-	return lipgloss.NewStyle().
-		Border(lipgloss.NormalBorder()).
+func selectorPaneStyle(width, height int, stacked bool) lipgloss.Style {
+	style := lipgloss.NewStyle().
+		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(colorMuted).
-		Width(contentWidth).
-		Height(contentHeight)
+		Padding(0, 1).
+		Width(width).
+		Height(height)
+	if stacked {
+		return style.BorderBottom(true)
+	}
+	return style.BorderRight(true)
+}
+
+func contentPaneStyle(width, height int) lipgloss.Style {
+	return lipgloss.NewStyle().
+		Padding(0, 1).
+		Width(width).
+		Height(height)
 }
 
 func stateStyle(state string) lipgloss.Style {
@@ -432,6 +465,12 @@ func fitFrame(content string, width, height int) string {
 	if len(lines) > height {
 		lines = lines[:height]
 	}
+	for len(lines) < height {
+		lines = append(lines, "")
+	}
+	for index, line := range lines {
+		lines[index] = padLine(line, width)
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -440,6 +479,17 @@ func fitBlock(content string, width, height int) string {
 	lines := strings.Split(content, "\n")
 	if len(lines) > height {
 		lines = lines[:height]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func fitHistory(content string, width, height int) string {
+	lines := strings.Split(fitLines(content, width), "\n")
+	if len(lines) > height {
+		lines = append(lines[:1], lines[len(lines)-height+1:]...)
+	}
+	for len(lines) < height {
+		lines = append(lines, "")
 	}
 	return strings.Join(lines, "\n")
 }

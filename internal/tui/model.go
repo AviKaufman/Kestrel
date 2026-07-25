@@ -34,8 +34,10 @@ const (
 
 // HubState records the current primary supervisor destination or its discovery error.
 type HubState struct {
-	Target firstmate.HubTarget
-	Err    error
+	Target     firstmate.HubTarget
+	History    []string
+	Err        error
+	HistoryErr error
 }
 
 // Source refreshes read-only Firstmate task and worker output.
@@ -43,6 +45,7 @@ type Source interface {
 	Load(context.Context) ([]firstmate.Task, error)
 	LoadLive(context.Context, firstmate.Task) ([]string, error)
 	LoadHub(context.Context) (firstmate.HubTarget, error)
+	LoadHubHistory(context.Context, firstmate.HubTarget) ([]string, error)
 	Send(context.Context, firstmate.Task, string) error
 	SendHub(context.Context, firstmate.HubTarget, string) error
 	CreatePrivate(context.Context, string) (firstmate.DirectSession, error)
@@ -74,10 +77,12 @@ type Model struct {
 }
 
 type fleetLoadedMsg struct {
-	tasks  []firstmate.Task
-	hub    firstmate.HubTarget
-	hubErr error
-	err    error
+	tasks         []firstmate.Task
+	hub           firstmate.HubTarget
+	hubErr        error
+	hubHistory    []string
+	hubHistoryErr error
+	err           error
 }
 
 type liveLoadedMsg struct {
@@ -147,7 +152,12 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		selectedID := model.selectedID()
 		model.tasks = message.tasks
-		model.hub = HubState{Target: message.hub, Err: message.hubErr}
+		model.hub = HubState{
+			Target:     message.hub,
+			History:    message.hubHistory,
+			Err:        message.hubErr,
+			HistoryErr: message.hubHistoryErr,
+		}
 		model.selected = indexOfTask(model.destinationTasks(), selectedID)
 		if model.selected < 0 {
 			model.selected = 0
@@ -390,7 +400,18 @@ func (model Model) refresh() tea.Cmd {
 			return fleetLoadedMsg{err: err}
 		}
 		hub, hubErr := model.source.LoadHub(ctx)
-		return fleetLoadedMsg{tasks: tasks, hub: hub, hubErr: hubErr}
+		var history []string
+		var historyErr error
+		if hubErr == nil {
+			history, historyErr = model.source.LoadHubHistory(ctx, hub)
+		}
+		return fleetLoadedMsg{
+			tasks:         tasks,
+			hub:           hub,
+			hubErr:        hubErr,
+			hubHistory:    history,
+			hubHistoryErr: historyErr,
+		}
 	}
 }
 

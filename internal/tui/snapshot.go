@@ -26,6 +26,16 @@ func RenderSnapshot(home string, hub HubState, tasks []firstmate.Task, live []st
 	} else {
 		fmt.Fprintf(&output, "hub: %s %s\n", valueOrDash(hub.Target.Backend), valueOrDash(hub.Target.Target))
 	}
+	fmt.Fprintln(&output, "HUB CONVERSATION (bounded; read-only)")
+	if hub.HistoryErr != nil {
+		fmt.Fprintf(&output, "history unavailable: %s\n", hub.HistoryErr)
+	} else if len(hub.History) == 0 {
+		fmt.Fprintln(&output, "No hub conversation capture available.")
+	} else {
+		for _, line := range hub.History {
+			fmt.Fprintln(&output, line)
+		}
+	}
 	fmt.Fprintf(&output, "tasks: %d\n", len(tasks))
 	fmt.Fprintln(&output)
 	fmt.Fprintln(&output, "DESTINATIONS")

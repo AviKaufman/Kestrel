@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -14,10 +15,12 @@ import (
 )
 
 type fakeSource struct {
-	tasks  []firstmate.Task
-	live   []string
-	hub    firstmate.HubTarget
-	hubErr error
+	tasks         []firstmate.Task
+	live          []string
+	hub           firstmate.HubTarget
+	hubErr        error
+	hubHistory    []string
+	hubHistoryErr error
 }
 
 type deadlineCheckingSource struct{}
@@ -57,6 +60,13 @@ func (deadlineCheckingSource) SendHub(ctx context.Context, _ firstmate.HubTarget
 	return nil
 }
 
+func (deadlineCheckingSource) LoadHubHistory(ctx context.Context, _ firstmate.HubTarget) ([]string, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return nil, errors.New("missing deadline")
+	}
+	return []string{"bounded hub history"}, nil
+}
+
 func (deadlineCheckingSource) CreatePrivate(ctx context.Context, _ string) (firstmate.DirectSession, error) {
 	if _, ok := ctx.Deadline(); !ok {
 		return firstmate.DirectSession{}, errors.New("missing deadline")
@@ -82,6 +92,10 @@ func (source fakeSource) LoadHub(context.Context) (firstmate.HubTarget, error) {
 
 func (source fakeSource) SendHub(context.Context, firstmate.HubTarget, string) error {
 	return nil
+}
+
+func (source fakeSource) LoadHubHistory(context.Context, firstmate.HubTarget) ([]string, error) {
+	return source.hubHistory, source.hubHistoryErr
 }
 
 func (source fakeSource) CreatePrivate(context.Context, string) (firstmate.DirectSession, error) {
@@ -116,6 +130,31 @@ func (source *composerSource) SendHub(ctx context.Context, target firstmate.HubT
 
 func availableHub() HubState {
 	return HubState{Target: firstmate.HubTarget{Backend: "tmux", Target: "%9"}}
+}
+
+func TestHubHistoryIsVisibleAndRefreshesThroughBoundedSource(t *testing.T) {
+	hub := availableHub()
+	hub.History = []string{"captain: initial question", "firstmate: initial answer"}
+	source := fakeSource{
+		hub:        hub.Target,
+		hubHistory: []string{"captain: refreshed question", "firstmate: refreshed answer"},
+	}
+	model := NewModel("/fake/home", hub, nil, nil, source)
+	content := ansi.Strip(model.View().Content)
+	if !strings.Contains(content, "HUB CONVERSATION") || !strings.Contains(content, "initial answer") {
+		t.Fatalf("initial hub history missing:\n%s", content)
+	}
+
+	updated, command := model.Update(keyPress("r"))
+	if command == nil {
+		t.Fatal("hub refresh returned nil command")
+	}
+	model = updated.(Model)
+	model = updateModel(t, model, command())
+	content = ansi.Strip(model.View().Content)
+	if !strings.Contains(content, "refreshed answer") || strings.Contains(content, "initial answer") {
+		t.Fatalf("refreshed hub history incorrect:\n%s", content)
+	}
 }
 
 type createSource struct {
@@ -455,7 +494,7 @@ func TestMainGeometryIsFlushBelowCompactHeader(t *testing.T) {
 	if len(lines) < 3 || !strings.Contains(lines[0], "firstmate") {
 		t.Fatalf("first line is not the compact header:\n%s", model.View().Content)
 	}
-	if strings.TrimSpace(lines[1]) == "" || !strings.HasPrefix(lines[1], "┌") {
+	if strings.TrimSpace(lines[1]) == "" || strings.ContainsAny(lines[1], "┌┐") {
 		t.Fatalf("main panes are not flush beneath header: line 1=%q", lines[1])
 	}
 	if strings.Contains(lines[1], "┐ ┌") {
@@ -463,6 +502,63 @@ func TestMainGeometryIsFlushBelowCompactHeader(t *testing.T) {
 	}
 	if strings.Contains(ansi.Strip(model.View().Content), "k/up previous") {
 		t.Fatalf("permanent key legend remains visible:\n%s", model.View().Content)
+	}
+}
+
+func TestMainSurfaceFillsTerminalWithOneSharedDivider(t *testing.T) {
+	model := NewModel("/fake/home", availableHub(), sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 28})
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+
+	if len(lines) != 28 {
+		t.Fatalf("rendered height = %d, want 28:\n%s", len(lines), model.View().Content)
+	}
+	for index, line := range lines {
+		if width := lipgloss.Width(line); width != 100 {
+			t.Fatalf("line %d width = %d, want 100: %q", index, width, line)
+		}
+	}
+	if strings.ContainsAny(lines[1], "┌┐") {
+		t.Fatalf("main surface retains an outer top border: %q", lines[1])
+	}
+	if dividers := strings.Count(lines[2], "│"); dividers != 1 {
+		t.Fatalf("body divider count = %d, want one shared divider: %q", dividers, lines[2])
+	}
+}
+
+func TestCompactHeaderUsesDistinctRosePineGroups(t *testing.T) {
+	model := NewModel("/fake/home", availableHub(), sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
+	header := renderHeader(model, 140)
+	for _, colorCode := range []string{
+		"38;2;196;167;231",
+		"38;2;156;207;216",
+		"38;2;246;193;119",
+	} {
+		if !strings.Contains(header, colorCode) {
+			t.Fatalf("header lacks accent %q: %q", colorCode, header)
+		}
+	}
+}
+
+func TestHubHistoryDominatesWhileComposerStaysAtBottom(t *testing.T) {
+	hub := availableHub()
+	for index := 1; index <= 20; index++ {
+		hub.History = append(hub.History, fmt.Sprintf("history line %02d", index))
+	}
+	model := NewModel("/fake/home", hub, nil, nil, fakeSource{})
+	model = updateModel(t, model, tea.WindowSizeMsg{Width: 100, Height: 28})
+	lines := strings.Split(ansi.Strip(model.View().Content), "\n")
+	composerRow := -1
+	for index, line := range lines {
+		if strings.Contains(line, "MESSAGE / Firstmate hub") {
+			composerRow = index
+		}
+	}
+	if composerRow < 24 {
+		t.Fatalf("composer row = %d, want anchored near bottom:\n%s", composerRow, model.View().Content)
+	}
+	if !strings.Contains(ansi.Strip(model.View().Content), "history line 15") {
+		t.Fatalf("hub history did not receive dominant height:\n%s", model.View().Content)
 	}
 }
 
@@ -616,8 +712,8 @@ func TestModelViewUsesDominantInspectorAndFitsNarrowWidth(t *testing.T) {
 			t.Fatalf("rendered line width = %d, want <= 64: %q", width, line)
 		}
 	}
-	if bottomBorders := strings.Count(ansi.Strip(content), "└"); bottomBorders < 2 {
-		t.Fatalf("rendered bottom borders = %d, want list and inspector borders:\n%s", bottomBorders, content)
+	if outerCorners := strings.Count(ansi.Strip(content), "└") + strings.Count(ansi.Strip(content), "┘"); outerCorners != 0 {
+		t.Fatalf("rendered outer bottom corners = %d, want edge-to-edge surface:\n%s", outerCorners, content)
 	}
 }
 

@@ -2,6 +2,7 @@
 # Resolve and send to the existing Firstmate primary supervisor endpoint.
 # Usage:
 #   fm-tui-hub.sh resolve
+#   fm-tui-hub.sh history <backend> <target> <lines>
 #   fm-tui-hub.sh send <backend> <target> <message>
 #
 # bin/fm-supervisor-target-lib.sh owns supervisor discovery.
@@ -58,6 +59,22 @@ case "${1:-}" in
     [ "$#" -eq 1 ] || { echo "error: resolve takes no arguments" >&2; exit 2; }
     resolve_hub
     ;;
+  history)
+    [ "$#" -eq 4 ] || { echo "error: history requires backend, target, and line bound" >&2; exit 2; }
+    requested_backend=$2
+    requested_target=$3
+    lines=$4
+    case "$lines" in
+      ''|*[!0-9]*|0) echo "error: history lines must be positive" >&2; exit 1 ;;
+    esac
+    [ "$lines" -le 200 ] || { echo "error: history lines exceeds 200" >&2; exit 1; }
+    current=$(resolve_hub) || exit 1
+    [ "$current" = "$requested_backend	$requested_target" ] || {
+      echo "error: Firstmate hub target changed before history capture; refresh and retry" >&2
+      exit 1
+    }
+    fm_backend_capture "$requested_backend" "$requested_target" "$lines"
+    ;;
   send)
     [ "$#" -eq 4 ] || { echo "error: send requires backend, target, and one message argument" >&2; exit 2; }
     requested_backend=$2
@@ -93,7 +110,7 @@ case "${1:-}" in
     printf 'sent\n'
     ;;
   *)
-    echo "usage: fm-tui-hub.sh resolve | send <backend> <target> <message>" >&2
+    echo "usage: fm-tui-hub.sh resolve | history <backend> <target> <lines> | send <backend> <target> <message>" >&2
     exit 2
     ;;
 esac

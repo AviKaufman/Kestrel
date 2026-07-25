@@ -82,6 +82,7 @@ case "$1" in
   capture-pane)
     case " $* " in
       *" -e "*) printf '›\n' ;;
+      *" -t %9 "*) printf 'captain: status\nfirstmate: under way\n' ;;
       *) printf 'bounded direct capture\n' ;;
     esac
     ;;
@@ -138,6 +139,12 @@ hub_sent=$(env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGE
 [ "$hub_sent" = sent ] || fail "hub send = '$hub_sent'"
 grep -F -- "send-keys -t %9 -l $message" "$LOG" >/dev/null \
   || fail "hub send did not preserve the literal message argument"
+hub_history=$(env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGET=%9 \
+  "$ROOT/bin/fm-tui-hub.sh" history tmux %9 20)
+[ "$hub_history" = $'captain: status\nfirstmate: under way' ] \
+  || fail "hub history = '$hub_history'"
+grep -F -- "capture-pane -p -t %9 -S -20" "$LOG" >/dev/null \
+  || fail "hub history did not use the bounded backend capture"
 
 env TMUX_PANE=%9 bash -c 'exec -a codex sleep 60' &
 LOCK_HOLDER_PID=$!

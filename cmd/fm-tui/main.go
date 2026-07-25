@@ -152,8 +152,9 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 			PrefixArgs: []string{"send"},
 		},
 		Hub: firstmate.ShellHubAdapter{
-			Path: hubPath,
-			Home: home,
+			Path:  hubPath,
+			Home:  home,
+			Lines: options.liveRows,
 		},
 		StatusMaxLines: options.statusRows,
 		StatusMaxBytes: 64 * 1024,
@@ -168,7 +169,17 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	hubTarget, hubErr := loader.LoadHub(ctx)
-	hub := tui.HubState{Target: hubTarget, Err: hubErr}
+	var hubHistory []string
+	var hubHistoryErr error
+	if hubErr == nil {
+		hubHistory, hubHistoryErr = loader.LoadHubHistory(ctx, hubTarget)
+	}
+	hub := tui.HubState{
+		Target:     hubTarget,
+		History:    hubHistory,
+		Err:        hubErr,
+		HistoryErr: hubHistoryErr,
+	}
 	var live []string
 	if len(tasks) > 0 {
 		live, err = loader.LoadLive(ctx, tasks[0])

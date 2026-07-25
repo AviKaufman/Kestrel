@@ -18,7 +18,19 @@ type HubTarget struct {
 // HubAdapter resolves and sends to the current primary supervisor.
 type HubAdapter interface {
 	Resolve(context.Context) (HubTarget, error)
+	Read(context.Context, HubTarget) ([]string, error)
 	Send(context.Context, HubTarget, string) error
+}
+
+// LoadHubHistory reads bounded primary-supervisor conversation from the hub adapter.
+func (loader Loader) LoadHubHistory(ctx context.Context, target HubTarget) ([]string, error) {
+	if loader.Hub == nil {
+		return nil, fmt.Errorf("hub adapter is required")
+	}
+	if !validHubTarget(target) {
+		return nil, fmt.Errorf("invalid Firstmate hub target %#v", target)
+	}
+	return loader.Hub.Read(ctx, target)
 }
 
 // ParseHubTarget parses one backend<TAB>target record.

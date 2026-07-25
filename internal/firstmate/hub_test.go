@@ -15,6 +15,8 @@ type fakeHubAdapter struct {
 	sentTarget HubTarget
 	message    string
 	sendErr    error
+	history    []string
+	historyErr error
 }
 
 func (adapter *fakeHubAdapter) Resolve(context.Context) (HubTarget, error) {
@@ -25,6 +27,10 @@ func (adapter *fakeHubAdapter) Send(_ context.Context, target HubTarget, message
 	adapter.sentTarget = target
 	adapter.message = message
 	return adapter.sendErr
+}
+
+func (adapter *fakeHubAdapter) Read(_ context.Context, _ HubTarget) ([]string, error) {
+	return adapter.history, adapter.historyErr
 }
 
 func TestParseHubTargetAcceptsOneStableRecord(t *testing.T) {
@@ -50,7 +56,10 @@ func TestParseHubTargetAcceptsOneStableRecord(t *testing.T) {
 }
 
 func TestLoaderResolvesAndRoutesHubMessages(t *testing.T) {
-	adapter := &fakeHubAdapter{target: HubTarget{Backend: "herdr", Target: "default:w1:p2"}}
+	adapter := &fakeHubAdapter{
+		target:  HubTarget{Backend: "herdr", Target: "default:w1:p2"},
+		history: []string{"captain: status", "firstmate: under way"},
+	}
 	loader := Loader{Hub: adapter}
 	target, err := loader.LoadHub(context.Background())
 	if err != nil {
@@ -64,6 +73,13 @@ func TestLoaderResolvesAndRoutesHubMessages(t *testing.T) {
 	}
 	if adapter.sentTarget != target || adapter.message != "hello primary" {
 		t.Fatalf("hub send = target %#v message %q", adapter.sentTarget, adapter.message)
+	}
+	history, err := loader.LoadHubHistory(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(history, "|") != "captain: status|firstmate: under way" {
+		t.Fatalf("LoadHubHistory() = %#v", history)
 	}
 }
 
@@ -98,11 +114,16 @@ send)
   printf '%s\n%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3" "$4" > "$ADAPTER_LOG"
   if [ "${FAIL_SEND:-}" = 1 ]; then printf 'hub unavailable\n' >&2; exit 8; fi
   ;;
+history)
+  printf '%s\n%s\n%s\n%s\n%s\n' "$#" "$1" "$2" "$3" "$4" > "$ADAPTER_LOG"
+  printf 'old line\ncaptain: status\nfirstmate: under way\n'
+  ;;
 esac`)
 	adapter := ShellHubAdapter{
 		Path:     script,
 		Home:     Home{Root: "/fake/home", StateDir: "/fake/home/state"},
 		ExtraEnv: []string{"ADAPTER_LOG=" + logPath},
+		Lines:    2,
 	}
 	target, err := adapter.Resolve(context.Background())
 	if err != nil {
@@ -118,6 +139,20 @@ esac`)
 	}
 	if string(logBytes) != "4\nsend\ntmux\n%9\n"+message+"\n" {
 		t.Fatalf("hub adapter argv = %q", logBytes)
+	}
+	history, err := adapter.Read(context.Background(), target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(history, "|") != "[earlier hub history omitted] captain: status|firstmate: under way" {
+		t.Fatalf("hub history = %#v", history)
+	}
+	logBytes, err = os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(logBytes) != "4\nhistory\ntmux\n%9\n2\n" {
+		t.Fatalf("hub history argv = %q", logBytes)
 	}
 
 	adapter.ExtraEnv = append(adapter.ExtraEnv, "FAIL_SEND=1")

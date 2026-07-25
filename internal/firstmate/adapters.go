@@ -126,6 +126,7 @@ type ShellMessageSender struct {
 type ShellHubAdapter struct {
 	Path     string
 	Home     Home
+	Lines    int
 	ExtraEnv []string
 }
 
@@ -159,6 +160,34 @@ func (adapter ShellHubAdapter) Send(ctx context.Context, target HubTarget, messa
 		return fmt.Errorf("send to Firstmate hub %s: adapter output exceeded %d bytes", target.Target, adapterOutputLimit)
 	}
 	return nil
+}
+
+func (adapter ShellHubAdapter) Read(ctx context.Context, target HubTarget) ([]string, error) {
+	lines := adapter.Lines
+	if lines <= 0 {
+		lines = 40
+	}
+	stdout, stderr, truncated, err := runBounded(
+		ctx,
+		adapter.Path,
+		[]string{"history", target.Backend, target.Target, strconv.Itoa(lines)},
+		adapterEnvironment(adapter.Home, adapter.ExtraEnv),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read Firstmate hub history %s: %w: %s", target.Target, err, strings.TrimSpace(stderr))
+	}
+	rawLines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if len(rawLines) == 1 && rawLines[0] == "" {
+		rawLines = nil
+	}
+	if len(rawLines) > lines {
+		rawLines = rawLines[len(rawLines)-lines:]
+		truncated = true
+	}
+	if truncated && len(rawLines) > 0 {
+		rawLines[0] = "[earlier hub history omitted] " + rawLines[0]
+	}
+	return rawLines, nil
 }
 
 func (sender ShellMessageSender) Send(ctx context.Context, target, message string) error {

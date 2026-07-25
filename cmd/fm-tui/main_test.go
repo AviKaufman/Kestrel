@@ -36,6 +36,7 @@ func TestRunSnapshotAgainstFakeHomeAndInjectedAdapters(t *testing.T) {
 	for _, expected := range []string{
 		"FIRSTMATE TUI SNAPSHOT",
 		"hub: tmux %1",
+		"captain: fake hub history",
 		"destination: Firstmate hub",
 		"task id: demo",
 		"current state: working",
