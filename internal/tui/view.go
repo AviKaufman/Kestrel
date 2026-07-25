@@ -53,6 +53,9 @@ func (model Model) render() string {
 		body = fitLines(errorStyle.Render("read error: "+model.err.Error())+"\n"+body, width)
 	}
 	frame := fitFrame(header+"\n"+body, width, height)
+	if model.creatingPrivate {
+		frame = overlayModal(frame, renderPrivateCreate(model, width, height), width, height)
+	}
 	if model.helpVisible {
 		frame = overlayModal(frame, renderHelp(width, height), width, height)
 	}
@@ -69,7 +72,7 @@ func renderHeader(model Model, width int) string {
 		return label
 	}
 	content := fmt.Sprintf(
-		" firstmate | 1 %s  2 %s %d  3 %s %d | workers %d | home %s | ? help ",
+		" firstmate | 1 %s  2 %s %d  3 %s %d | workers %d | n new | home %s | ? help ",
 		tab(HubDestination, "HUB"),
 		tab(ManagedDestination, "MANAGED"),
 		managed,
@@ -101,6 +104,9 @@ func renderDestinationList(model Model, width, height int) string {
 	lines := []string{titleStyle.Render(title)}
 	if len(tasks) == 0 {
 		lines = append(lines, labelStyle.Render(empty))
+		if model.destination == PrivateDestination {
+			lines = append(lines, labelStyle.Render("n creates a private Codex thread."))
+		}
 	} else {
 		for index, task := range tasks {
 			prefix := "  "
@@ -312,6 +318,7 @@ func renderHelp(width, height int) string {
 		"esc            close help or return to Reports",
 		"r              refresh current Firstmate reads",
 		"i              focus destination message composer",
+		"n              create a private Codex thread",
 		"enter          send while composer is focused",
 		"?              toggle this help",
 		"q              quit",
@@ -323,6 +330,30 @@ func renderHelp(width, height int) string {
 	return lipgloss.NewStyle().
 		Border(lipgloss.NormalBorder()).
 		BorderForeground(colorGold).
+		Width(max(1, modalWidth-2)).
+		Height(max(1, modalHeight-2)).
+		Render(fitBlock(strings.Join(lines, "\n"), max(1, modalWidth-2), max(1, modalHeight-2)))
+}
+
+func renderPrivateCreate(model Model, width, height int) string {
+	status := model.createStatus
+	if status == "" {
+		status = "enter creates, esc cancels"
+	}
+	lines := []string{
+		focusStyle.Render("FOCUSED MODAL / NEW PRIVATE CODEX"),
+		"",
+		"Create a captain-private Codex thread.",
+		labelStyle.Render("Working directory is fixed by --private-cwd."),
+		"",
+		model.privateInput.View(),
+		labelStyle.Render(status),
+	}
+	modalWidth := min(58, max(34, width-4))
+	modalHeight := min(12, max(9, height-4))
+	return lipgloss.NewStyle().
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(colorIris).
 		Width(max(1, modalWidth-2)).
 		Height(max(1, modalHeight-2)).
 		Render(fitBlock(strings.Join(lines, "\n"), max(1, modalWidth-2), max(1, modalHeight-2)))

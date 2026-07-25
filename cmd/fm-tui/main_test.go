@@ -61,6 +61,24 @@ func TestRunReportsClearHomeError(t *testing.T) {
 	}
 }
 
+func TestRunRejectsUnavailablePrivateWorkingDirectory(t *testing.T) {
+	root := filepath.Clean(filepath.Join("..", ".."))
+	home := filepath.Join(root, "tests", "fixtures", "tui-home")
+	var stdout, stderr bytes.Buffer
+	exitCode := run([]string{
+		"--snapshot",
+		"--home", home,
+		"--root", root,
+		"--private-cwd", filepath.Join(t.TempDir(), "missing"),
+	}, &stdout, &stderr)
+	if exitCode == 0 {
+		t.Fatal("run() exit = 0, want failure")
+	}
+	if !strings.Contains(stderr.String(), "private working directory") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string, mode os.FileMode) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), mode); err != nil {

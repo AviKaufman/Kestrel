@@ -10,15 +10,37 @@ import (
 // RenderSnapshot emits an ANSI-free, stable review and test surface.
 func RenderSnapshot(home string, hub HubState, tasks []firstmate.Task, live []string) string {
 	var output strings.Builder
+	managed := countOwnership(tasks, firstmate.FirstmateManaged)
+	private := countOwnership(tasks, firstmate.CaptainPrivate)
 	fmt.Fprintln(&output, "FIRSTMATE TUI SNAPSHOT")
 	fmt.Fprintf(&output, "home: %s\n", home)
-	fmt.Fprintln(&output, "destination: Firstmate hub")
+	fmt.Fprintf(
+		&output,
+		"firstmate | [1 HUB] | 2 MANAGED %d | 3 PRIVATE %d | n new | ? help\n",
+		managed,
+		private,
+	)
+	fmt.Fprintln(&output, "active destination: Firstmate hub")
 	if hub.Err != nil {
 		fmt.Fprintf(&output, "hub: unavailable: %s\n", hub.Err)
 	} else {
 		fmt.Fprintf(&output, "hub: %s %s\n", valueOrDash(hub.Target.Backend), valueOrDash(hub.Target.Target))
 	}
 	fmt.Fprintf(&output, "tasks: %d\n", len(tasks))
+	fmt.Fprintln(&output)
+	fmt.Fprintln(&output, "DESTINATIONS")
+	fmt.Fprintln(&output, "> Firstmate hub | send route: current primary supervisor")
+	if managed == 0 {
+		fmt.Fprintln(&output, "  Managed workers: 0 | No active Firstmate-managed workers.")
+	} else {
+		fmt.Fprintf(&output, "  Managed workers: %d | send route: fm-send.sh\n", managed)
+	}
+	if private == 0 {
+		fmt.Fprintln(&output, "  Private Codex: 0 | No active private Codex threads.")
+	} else {
+		fmt.Fprintf(&output, "  Private Codex: %d | send route: fm-tui-direct.sh\n", private)
+	}
+	fmt.Fprintln(&output, "private create: n | launch route: fm-tui-direct.sh create")
 	fmt.Fprintln(&output)
 	fmt.Fprintln(&output, "TASKS")
 	if len(tasks) == 0 {

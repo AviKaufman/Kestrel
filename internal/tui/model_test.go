@@ -57,6 +57,13 @@ func (deadlineCheckingSource) SendHub(ctx context.Context, _ firstmate.HubTarget
 	return nil
 }
 
+func (deadlineCheckingSource) CreatePrivate(ctx context.Context, _ string) (firstmate.DirectSession, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return firstmate.DirectSession{}, errors.New("missing deadline")
+	}
+	return firstmate.DirectSession{}, nil
+}
+
 func (source fakeSource) Load(context.Context) ([]firstmate.Task, error) {
 	return source.tasks, nil
 }
@@ -75,6 +82,10 @@ func (source fakeSource) LoadHub(context.Context) (firstmate.HubTarget, error) {
 
 func (source fakeSource) SendHub(context.Context, firstmate.HubTarget, string) error {
 	return nil
+}
+
+func (source fakeSource) CreatePrivate(context.Context, string) (firstmate.DirectSession, error) {
+	return firstmate.DirectSession{}, errors.New("private creation unavailable")
 }
 
 type composerSource struct {
@@ -105,6 +116,88 @@ func (source *composerSource) SendHub(ctx context.Context, target firstmate.HubT
 
 func availableHub() HubState {
 	return HubState{Target: firstmate.HubTarget{Backend: "tmux", Target: "%9"}}
+}
+
+type createSource struct {
+	fakeSource
+	session firstmate.DirectSession
+	err     error
+	label   string
+}
+
+func (source *createSource) CreatePrivate(ctx context.Context, label string) (firstmate.DirectSession, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		return firstmate.DirectSession{}, errors.New("missing deadline")
+	}
+	source.label = label
+	return source.session, source.err
+}
+
+func TestPrivateCreatePromptCancelsWithoutLaunching(t *testing.T) {
+	source := &createSource{}
+	model := NewModel("/fake/home", availableHub(), nil, nil, source)
+	model = updateModel(t, model, keyPress("n"))
+	if !model.CreatingPrivate() || !strings.Contains(ansi.Strip(model.View().Content), "NEW PRIVATE CODEX") {
+		t.Fatalf("n did not open focused create prompt:\n%s", model.View().Content)
+	}
+	model = updateModel(t, model, keyPress("notes"))
+	model = updateModel(t, model, specialKey(tea.KeyEscape))
+	if model.CreatingPrivate() || source.label != "" || model.Destination() != HubDestination {
+		t.Fatalf("cancel creating=%v label=%q destination=%v", model.CreatingPrivate(), source.label, model.Destination())
+	}
+}
+
+func TestPrivateCreateSelectsRediscoveredSession(t *testing.T) {
+	session := firstmate.DirectSession{Target: "private:codex-notes.0", Project: "/projects/notes"}
+	task := firstmate.Task{
+		Metadata:  firstmate.Metadata{ID: session.Target, Project: session.Project},
+		Current:   firstmate.CurrentState{State: "working", Source: "tmux"},
+		Ownership: firstmate.CaptainPrivate,
+		Target:    session.Target,
+	}
+	source := &createSource{
+		fakeSource: fakeSource{tasks: []firstmate.Task{task}},
+		session:    session,
+	}
+	model := NewModel("/fake/home", availableHub(), nil, nil, source)
+	model = updateModel(t, model, keyPress("n"))
+	model = updateModel(t, model, keyPress("notes"))
+	updated, command := model.Update(specialKey(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("create enter returned nil command")
+	}
+	model = updated.(Model)
+	model = updateModel(t, model, command())
+	selected, found := model.selectedTask()
+	if source.label != "notes" || model.Destination() != PrivateDestination || !found || selected.Target != session.Target {
+		t.Fatalf("label=%q destination=%v selected=%#v found=%v", source.label, model.Destination(), selected, found)
+	}
+	if model.CreatingPrivate() || !strings.Contains(model.CreateStatus(), "Created") {
+		t.Fatalf("success creating=%v status=%q", model.CreatingPrivate(), model.CreateStatus())
+	}
+}
+
+func TestPrivateCreateFailureKeepsDestinationAndDraftWithoutSelection(t *testing.T) {
+	source := &createSource{err: errors.New("launch refused")}
+	model := NewModel("/fake/home", availableHub(), nil, nil, source)
+	model = updateModel(t, model, keyPress("2"))
+	model = updateModel(t, model, keyPress("n"))
+	model = updateModel(t, model, keyPress("retry"))
+	updated, command := model.Update(specialKey(tea.KeyEnter))
+	if command == nil {
+		t.Fatal("create enter returned nil command")
+	}
+	model = updated.(Model)
+	model = updateModel(t, model, command())
+	if model.Destination() != ManagedDestination || !model.CreatingPrivate() || model.PrivateDraft() != "retry" {
+		t.Fatalf("failure destination=%v creating=%v draft=%q", model.Destination(), model.CreatingPrivate(), model.PrivateDraft())
+	}
+	if !strings.Contains(model.CreateStatus(), "launch refused") {
+		t.Fatalf("failure status=%q", model.CreateStatus())
+	}
+	if _, found := model.selectedTask(); found {
+		t.Fatal("failed create fabricated a selected worker")
+	}
 }
 
 func TestDestinationsKeepHubPersistentAndWorkersSeparated(t *testing.T) {
@@ -310,6 +403,23 @@ func TestHelpModalOverlaysWithoutChangingFrameGeometry(t *testing.T) {
 	}
 	if !strings.Contains(ansi.Strip(overlay), "firstmate") {
 		t.Fatalf("help displaced the compact header:\n%s", overlay)
+	}
+}
+
+func TestHelpStateRenderingIsDeterministic(t *testing.T) {
+	render := func() string {
+		model := NewModel("/fake/home", availableHub(), sampleTasks(), nil, fakeSource{tasks: sampleTasks()})
+		model = updateModel(t, model, tea.WindowSizeMsg{Width: 88, Height: 24})
+		model = updateModel(t, model, keyPress("?"))
+		return model.View().Content
+	}
+	first := render()
+	second := render()
+	if first != second {
+		t.Fatal("identical help states rendered differently")
+	}
+	if !strings.Contains(ansi.Strip(first), "KEYBOARD HELP") {
+		t.Fatalf("deterministic help state lacks help content:\n%s", first)
 	}
 }
 

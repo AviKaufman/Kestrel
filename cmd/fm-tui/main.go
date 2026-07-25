@@ -26,6 +26,7 @@ type options struct {
 	directPath string
 	sendPath   string
 	hubPath    string
+	privateCwd string
 	snapshot   bool
 	statusRows int
 	liveRows   int
@@ -47,6 +48,7 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 	flags.StringVar(&options.directPath, "direct", "", "path to fm-tui-direct.sh")
 	flags.StringVar(&options.sendPath, "send", "", "path to fm-send.sh")
 	flags.StringVar(&options.hubPath, "hub", "", "path to fm-tui-hub.sh")
+	flags.StringVar(&options.privateCwd, "private-cwd", "", "allowed working directory for new private Codex threads (default: code root)")
 	flags.BoolVar(&options.snapshot, "snapshot", false, "print deterministic non-interactive output")
 	flags.IntVar(&options.statusRows, "status-lines", 20, "maximum status events per task")
 	flags.IntVar(&options.liveRows, "live-lines", 40, "maximum captured worker lines")
@@ -106,6 +108,21 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "fm-tui: hub adapter: %v\n", err)
 		return 1
 	}
+	privateCwd := options.privateCwd
+	if privateCwd == "" {
+		privateCwd = root
+	}
+	privateCwd, err = resolveDirectory(privateCwd, "private working directory")
+	if err != nil {
+		fmt.Fprintf(stderr, "fm-tui: %v\n", err)
+		return 1
+	}
+
+	directSource := firstmate.ShellDirectSessionSource{
+		Path:  directPath,
+		Home:  home,
+		Lines: options.liveRows,
+	}
 
 	loader := firstmate.Loader{
 		Home: home,
@@ -122,11 +139,9 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 			Home:  home,
 			Lines: options.liveRows,
 		},
-		Direct: firstmate.ShellDirectSessionSource{
-			Path:  directPath,
-			Home:  home,
-			Lines: options.liveRows,
-		},
+		Direct:         directSource,
+		DirectCreate:   directSource,
+		PrivateWorkdir: privateCwd,
 		ManagedSend: firstmate.ShellMessageSender{
 			Path: sendPath,
 			Home: home,
@@ -219,6 +234,21 @@ func resolveAdapter(explicit, fallback string) (string, error) {
 	}
 	if info.Mode()&0o111 == 0 {
 		return "", fmt.Errorf("%q is not executable", absolute)
+	}
+	return absolute, nil
+}
+
+func resolveDirectory(path, label string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve %s %q: %w", label, path, err)
+	}
+	info, err := os.Stat(absolute)
+	if err != nil {
+		return "", fmt.Errorf("%s %q is unavailable: %w", label, absolute, err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s %q is not a directory", label, absolute)
 	}
 	return absolute, nil
 }
