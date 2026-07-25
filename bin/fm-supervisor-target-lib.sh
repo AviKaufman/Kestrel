@@ -14,6 +14,9 @@
 # in bin/fm-supervise-daemon.sh, so its unit tests (tests/fm-daemon.test.sh)
 # keep exercising the same names after the daemon sources this file.
 
+# shellcheck source=bin/fm-session-lock-lib.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fm-session-lock-lib.sh"
+
 # Default supervisor pane target/backend when nothing is configured or detected.
 # "firstmate:0" is a tmux session:window name, so the bare fallback (nothing
 # configured, nothing detected) assumes tmux - matching the daemon's pre-herdr
@@ -75,4 +78,59 @@ discover_supervisor_backend() {
   fi
   printf '%s' "$FM_SUPERVISOR_BACKEND_DEFAULT"
   return 1
+}
+
+# Print one environment value from the verified lock-owning process.
+# Linux /proc is the only accepted fallback source: if it is unavailable, the
+# caller fails closed and may still use the normal inherited-session markers.
+fm_supervisor_locked_process_env() {  # <pid> <key>
+  local pid=$1 key=$2 record
+  case "$key" in
+    FM_SUPERVISOR_TARGET|FM_SUPERVISOR_BACKEND|TMUX_PANE|HERDR_ENV|HERDR_PANE_ID|HERDR_SESSION) ;;
+    *) return 1 ;;
+  esac
+  [ -r "/proc/$pid/environ" ] || return 1
+  record=$(tr '\000' '\n' < "/proc/$pid/environ" | grep -m1 "^${key}=") || return 1
+  printf '%s' "${record#*=}"
+}
+
+# Resolve the active primary session from this home's verified live session
+# lock, never from a tmux inventory scan. Prints backend<TAB>target.
+discover_locked_supervisor_context() {  # <state-dir>
+  local state=$1 lock_pid explicit_target explicit_backend tmux_pane
+  local herdr_env herdr_pane herdr_session target backend
+  [ -f "$state/.lock" ] && [ ! -L "$state/.lock" ] || return 1
+  lock_pid=$(cat "$state/.lock" 2>/dev/null) || return 1
+  case "$lock_pid" in
+    ''|*[!0-9]*|1) return 1 ;;
+  esac
+  fm_harness_pid_alive "$lock_pid" || return 1
+
+  explicit_target=$(fm_supervisor_locked_process_env "$lock_pid" FM_SUPERVISOR_TARGET 2>/dev/null || true)
+  explicit_backend=$(fm_supervisor_locked_process_env "$lock_pid" FM_SUPERVISOR_BACKEND 2>/dev/null || true)
+  tmux_pane=$(fm_supervisor_locked_process_env "$lock_pid" TMUX_PANE 2>/dev/null || true)
+  herdr_env=$(fm_supervisor_locked_process_env "$lock_pid" HERDR_ENV 2>/dev/null || true)
+  herdr_pane=$(fm_supervisor_locked_process_env "$lock_pid" HERDR_PANE_ID 2>/dev/null || true)
+  herdr_session=$(fm_supervisor_locked_process_env "$lock_pid" HERDR_SESSION 2>/dev/null || true)
+
+  if [ -n "$explicit_target" ]; then
+    target=$explicit_target
+  elif [ -n "$tmux_pane" ]; then
+    target=$tmux_pane
+  elif [ "$herdr_env" = 1 ] && [ -n "$herdr_pane" ]; then
+    target="${herdr_session:-default}:$herdr_pane"
+  else
+    return 1
+  fi
+
+  if [ -n "$explicit_backend" ]; then
+    backend=$explicit_backend
+  elif [ -n "$tmux_pane" ]; then
+    backend=tmux
+  elif [ "$herdr_env" = 1 ] && [ -n "$herdr_pane" ]; then
+    backend=herdr
+  else
+    return 1
+  fi
+  printf '%s\t%s\n' "$backend" "$target"
 }

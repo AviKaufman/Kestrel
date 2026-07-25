@@ -3,7 +3,15 @@ set -eu
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TMP_ROOT=$(mktemp -d)
-trap 'rm -rf "$TMP_ROOT"' EXIT
+LOCK_HOLDER_PID=
+cleanup() {
+  if [ -n "$LOCK_HOLDER_PID" ]; then
+    kill "$LOCK_HOLDER_PID" 2>/dev/null || true
+    wait "$LOCK_HOLDER_PID" 2>/dev/null || true
+  fi
+  rm -rf "$TMP_ROOT"
+}
+trap cleanup EXIT
 
 fail() {
   echo "FAIL: $*" >&2
@@ -130,6 +138,18 @@ hub_sent=$(env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGE
 [ "$hub_sent" = sent ] || fail "hub send = '$hub_sent'"
 grep -F -- "send-keys -t %9 -l $message" "$LOG" >/dev/null \
   || fail "hub send did not preserve the literal message argument"
+
+env TMUX_PANE=%9 bash -c 'exec -a codex sleep 60' &
+LOCK_HOLDER_PID=$!
+printf '%s\n' "$LOCK_HOLDER_PID" > "$HOME_DIR/state/.lock"
+locked_hub=$(env "${common_env[@]}" FM_SUPERVISOR_BACKEND= FM_SUPERVISOR_TARGET= \
+  TMUX_PANE= HERDR_ENV= HERDR_PANE_ID= "$ROOT/bin/fm-tui-hub.sh" resolve)
+[ "$locked_hub" = $'tmux\t%9' ] \
+  || fail "hub did not resolve the active lock-owning primary context: '$locked_hub'"
+kill "$LOCK_HOLDER_PID"
+wait "$LOCK_HOLDER_PID" 2>/dev/null || true
+LOCK_HOLDER_PID=
+rm -f "$HOME_DIR/state/.lock"
 
 if env "${common_env[@]}" FM_SUPERVISOR_BACKEND=tmux FM_SUPERVISOR_TARGET=%9 \
   "$ROOT/bin/fm-tui-hub.sh" send tmux %8 hello >/dev/null 2>&1; then

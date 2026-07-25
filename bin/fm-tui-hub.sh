@@ -14,6 +14,8 @@ if [ -z "${FM_HOME:-}" ]; then
   echo "error: FM_HOME is required" >&2
   exit 1
 fi
+STATE="${FM_STATE_OVERRIDE:-$FM_HOME/state}"
+[ -d "$STATE" ] || { echo "error: state dir '$STATE' is missing" >&2; exit 1; }
 
 # shellcheck source=bin/fm-supervisor-target-lib.sh
 . "$SCRIPT_DIR/fm-supervisor-target-lib.sh"
@@ -21,14 +23,21 @@ fi
 . "$SCRIPT_DIR/fm-backend.sh"
 
 resolve_hub() {
-  local backend target
-  if ! target=$(discover_supervisor_target); then
-    echo "error: Firstmate hub target is unavailable; set FM_SUPERVISOR_TARGET explicitly" >&2
-    return 1
-  fi
-  if ! backend=$(discover_supervisor_backend); then
-    echo "error: Firstmate hub backend is unavailable; set FM_SUPERVISOR_BACKEND explicitly" >&2
-    return 1
+  local backend target locked
+  if [ -z "${FM_SUPERVISOR_TARGET:-}" ] && [ -z "${FM_SUPERVISOR_BACKEND:-}" ] \
+    && locked=$(discover_locked_supervisor_context "$STATE"); then
+    IFS=$'\t' read -r backend target <<EOF
+$locked
+EOF
+  else
+    if ! target=$(discover_supervisor_target); then
+      echo "error: Firstmate hub target is unavailable; no valid active primary session was found" >&2
+      return 1
+    fi
+    if ! backend=$(discover_supervisor_backend); then
+      echo "error: Firstmate hub backend is unavailable; no valid active primary session was found" >&2
+      return 1
+    fi
   fi
   case "$backend" in
     tmux|herdr) ;;
