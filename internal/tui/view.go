@@ -30,12 +30,12 @@ var (
 )
 
 func (model Model) render() string {
-	model.home = safeText(model.home)
-	model.hub = safeHub(model.hub)
-	model.tasks = safeTasks(model.tasks)
-	model.liveLines = safeLines(model.liveLines)
-	model.sendStatus = safeText(model.sendStatus)
-	model.createStatus = safeText(model.createStatus)
+	model.home = model.displayHome
+	model.hub = model.displayHub
+	model.tasks = model.displayTasks
+	model.liveLines = model.displayLive
+	model.sendStatus = safeScalar(model.sendStatus)
+	model.createStatus = safeScalar(model.createStatus)
 	width := max(40, model.width)
 	height := max(16, model.height)
 	header := renderHeader(model, width)
@@ -54,7 +54,7 @@ func (model Model) render() string {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, list, inspector)
 	}
 	if model.err != nil {
-		body = fitLines(errorStyle.Render("read error: "+safeText(model.err.Error()))+"\n"+body, width)
+		body = fitLines(errorStyle.Render("read error: "+safeScalar(model.err.Error()))+"\n"+body, width)
 	}
 	frame := fitFrame(header+"\n"+body, width, height)
 	if model.creatingPrivate {
@@ -269,11 +269,11 @@ func renderHubInspector(model Model, width, height int) string {
 	innerWidth := max(1, width-2)
 	target := fmt.Sprintf("%s %s", valueOrDash(model.hub.Target.Backend), valueOrDash(model.hub.Target.Target))
 	if model.hub.Err != nil {
-		target = errorStyle.Render(ansi.Truncate("unavailable: "+safeText(model.hub.Err.Error()), max(1, innerWidth-7), "…"))
+		target = errorStyle.Render(ansi.Truncate("unavailable: "+safeScalar(model.hub.Err.Error()), max(1, innerWidth-7), "…"))
 	}
 	history := []string{labelStyle.Render("HUB CONVERSATION (bounded; read-only)")}
 	if model.hub.HistoryErr != nil {
-		history = append(history, errorStyle.Render("history unavailable: "+safeText(model.hub.HistoryErr.Error())))
+		history = append(history, errorStyle.Render("history unavailable: "+safeScalar(model.hub.HistoryErr.Error())))
 	} else if len(model.hub.History) == 0 {
 		history = append(history, "No hub conversation capture available.")
 	} else {

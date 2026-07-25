@@ -9,10 +9,11 @@ import (
 	"github.com/kunchenguid/firstmate/internal/firstmate"
 )
 
-func safeText(value string) string {
+func safeScalar(value string) string {
 	return strings.Map(func(character rune) rune {
-		if character == '\n' || character == '\t' {
-			return character
+		switch character {
+		case '\n', '\r', '\t':
+			return ' '
 		}
 		if unicode.IsControl(character) {
 			return -1
@@ -21,46 +22,60 @@ func safeText(value string) string {
 	}, ansi.Strip(value))
 }
 
-func safeLines(lines []string) []string {
+func safeMultiline(value string) string {
+	value = strings.ReplaceAll(ansi.Strip(value), "\t", "    ")
+	return strings.Map(func(character rune) rune {
+		if character == '\n' {
+			return character
+		}
+		if unicode.IsControl(character) {
+			return -1
+		}
+		return character
+	}, value)
+}
+
+func safeMultilineLines(lines []string) []string {
 	sanitized := make([]string, len(lines))
 	for index, line := range lines {
-		sanitized[index] = safeText(line)
+		sanitized[index] = safeMultiline(line)
 	}
 	return sanitized
 }
 
 func safeHub(hub HubState) HubState {
-	hub.Target.Backend = safeText(hub.Target.Backend)
-	hub.Target.Target = safeText(hub.Target.Target)
-	hub.History = safeLines(hub.History)
+	hub.Target.Backend = safeScalar(hub.Target.Backend)
+	hub.Target.Target = safeScalar(hub.Target.Target)
+	hub.History = safeMultilineLines(hub.History)
 	return hub
 }
 
 func safeTasks(tasks []firstmate.Task) []firstmate.Task {
 	sanitized := make([]firstmate.Task, len(tasks))
 	for index, task := range tasks {
-		task.Metadata.ID = safeText(task.Metadata.ID)
-		task.Metadata.Project = safeText(task.Metadata.Project)
-		task.Metadata.Kind = safeText(task.Metadata.Kind)
-		task.Metadata.Mode = safeText(task.Metadata.Mode)
-		task.Metadata.Yolo = safeText(task.Metadata.Yolo)
-		task.Metadata.Harness = safeText(task.Metadata.Harness)
-		task.Metadata.Model = safeText(task.Metadata.Model)
-		task.Metadata.Effort = safeText(task.Metadata.Effort)
-		task.Metadata.Worktree = safeText(task.Metadata.Worktree)
-		task.Metadata.Window = safeText(task.Metadata.Window)
-		task.Current.State = safeText(task.Current.State)
-		task.Current.Source = safeText(task.Current.Source)
-		task.Current.Detail = safeText(task.Current.Detail)
-		task.Current.Raw = safeText(task.Current.Raw)
+		task.Metadata.ID = safeScalar(task.Metadata.ID)
+		task.Metadata.Project = safeScalar(task.Metadata.Project)
+		task.Metadata.Kind = safeScalar(task.Metadata.Kind)
+		task.Metadata.Mode = safeScalar(task.Metadata.Mode)
+		task.Metadata.Yolo = safeScalar(task.Metadata.Yolo)
+		task.Metadata.Harness = safeScalar(task.Metadata.Harness)
+		task.Metadata.Model = safeScalar(task.Metadata.Model)
+		task.Metadata.Effort = safeScalar(task.Metadata.Effort)
+		task.Metadata.Worktree = safeScalar(task.Metadata.Worktree)
+		task.Metadata.Window = safeScalar(task.Metadata.Window)
+		task.Current.State = safeScalar(task.Current.State)
+		task.Current.Source = safeScalar(task.Current.Source)
+		task.Current.Detail = safeScalar(task.Current.Detail)
+		task.Current.Raw = safeScalar(task.Current.Raw)
+		task.Events = append([]firstmate.StatusEvent(nil), task.Events...)
 		for eventIndex := range task.Events {
-			task.Events[eventIndex].Verb = safeText(task.Events[eventIndex].Verb)
-			task.Events[eventIndex].Note = safeText(task.Events[eventIndex].Note)
-			task.Events[eventIndex].Raw = safeText(task.Events[eventIndex].Raw)
+			task.Events[eventIndex].Verb = safeScalar(task.Events[eventIndex].Verb)
+			task.Events[eventIndex].Note = safeMultiline(task.Events[eventIndex].Note)
+			task.Events[eventIndex].Raw = safeMultiline(task.Events[eventIndex].Raw)
 		}
-		task.Report.Path = safeText(task.Report.Path)
-		task.Report.Content = safeText(task.Report.Content)
-		task.Target = safeText(task.Target)
+		task.Report.Path = safeScalar(task.Report.Path)
+		task.Report.Content = safeMultiline(task.Report.Content)
+		task.Target = safeScalar(task.Target)
 		sanitized[index] = task
 	}
 	return sanitized

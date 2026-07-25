@@ -6,14 +6,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 const (
-	defaultStatusLines  = 20
-	defaultStatusBytes  = 64 * 1024
-	defaultReportBytes  = 64 * 1024
-	defaultProbeTimeout = 15 * time.Second
+	defaultStatusLines      = 20
+	defaultStatusBytes      = 64 * 1024
+	defaultReportBytes      = 64 * 1024
+	defaultProbeTimeout     = 15 * time.Second
+	defaultProbeConcurrency = 8
 )
 
 // StateResolver owns current-state resolution for one task.
@@ -62,6 +64,17 @@ type Loader struct {
 	ProbeTimeout   time.Duration
 }
 
+type managedProbeResult struct {
+	task    Task
+	include bool
+	err     error
+}
+
+type directProbeResult struct {
+	sessions []DirectSession
+	err      error
+}
+
 func (loader Loader) Load(ctx context.Context) ([]Task, error) {
 	if loader.States == nil {
 		return nil, fmt.Errorf("current-state resolver is required")
@@ -90,76 +103,157 @@ func (loader Loader) Load(ctx context.Context) ([]Task, error) {
 	if probeTimeout <= 0 {
 		probeTimeout = defaultProbeTimeout
 	}
+	workerCount := min(defaultProbeConcurrency, len(metas))
+	if deadline, ok := ctx.Deadline(); ok && workerCount > 0 {
+		waves := (len(metas) + workerCount - 1) / workerCount
+		refreshBudget := time.Until(deadline) / time.Duration(waves)
+		if refreshBudget < probeTimeout {
+			probeTimeout = refreshBudget
+		}
+	}
+
+	directResults := make(chan directProbeResult, 1)
+	if loader.Direct != nil {
+		go func() {
+			sessions, discoverErr := loader.Direct.Discover(ctx, metas)
+			directResults <- directProbeResult{sessions: sessions, err: discoverErr}
+		}()
+	} else {
+		directResults <- directProbeResult{}
+	}
+
+	results := make([]managedProbeResult, len(metas))
+	jobs := make(chan int, len(metas))
+	for index := range metas {
+		jobs <- index
+	}
+	close(jobs)
+
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				results[index] = loader.loadManagedTask(
+					ctx,
+					metas[index],
+					probeTimeout,
+					statusLines,
+					statusBytes,
+					reportBytes,
+				)
+			}
+		}()
+	}
+	workers.Wait()
 
 	tasks := make([]Task, 0, len(metas))
-	for _, meta := range metas {
-		stateCtx, cancelState := context.WithTimeout(ctx, probeTimeout)
-		current, stateErr := loader.States.Resolve(stateCtx, meta.ID)
-		cancelState()
-		if stateErr != nil {
-			current = CurrentState{
-				State:  "unknown",
-				Source: "adapter-error",
-				Detail: stateErr.Error(),
-			}
+	for _, result := range results {
+		if result.err != nil {
+			return nil, result.err
 		}
-		agentCtx, cancelAgent := context.WithTimeout(ctx, probeTimeout)
-		agentState, agentErr := loader.Agents.ResolveAgentState(agentCtx, meta.ID)
-		cancelAgent()
-		if agentErr != nil || agentState != "alive" || isTerminalState(current.State) {
-			continue
+		if result.include {
+			tasks = append(tasks, result.task)
 		}
-		events, err := ReadStatusEvents(
-			filepath.Join(loader.Home.StateDir, meta.ID+".status"),
-			statusLines,
-			statusBytes,
-		)
-		if err != nil {
-			return nil, err
-		}
-		report, err := ReadReport(
-			filepath.Join(loader.Home.DataDir, meta.ID, "report.md"),
-			reportBytes,
-		)
-		if err != nil {
-			return nil, err
-		}
+	}
+
+	direct := <-directResults
+	if direct.err != nil {
+		return nil, direct.err
+	}
+	for _, session := range direct.sessions {
 		tasks = append(tasks, Task{
+			Metadata: Metadata{
+				ID:       session.Target,
+				Project:  session.Project,
+				Kind:     "direct-session",
+				Mode:     "private",
+				Harness:  "codex",
+				Worktree: session.Project,
+				Window:   session.Target,
+			},
+			Current: CurrentState{
+				State:  "working",
+				Source: "tmux",
+				Detail: "live Direct Codex session",
+			},
+			Ownership: CaptainPrivate,
+			Target:    session.Target,
+		})
+	}
+	return tasks, nil
+}
+
+func (loader Loader) loadManagedTask(
+	ctx context.Context,
+	meta Metadata,
+	probeTimeout time.Duration,
+	statusLines int,
+	statusBytes int,
+	reportBytes int,
+) managedProbeResult {
+	taskCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+
+	type stateResult struct {
+		current CurrentState
+		err     error
+	}
+	type agentResult struct {
+		state string
+		err   error
+	}
+	stateResults := make(chan stateResult, 1)
+	agentResults := make(chan agentResult, 1)
+	go func() {
+		current, stateErr := loader.States.Resolve(taskCtx, meta.ID)
+		stateResults <- stateResult{current: current, err: stateErr}
+	}()
+	go func() {
+		state, agentErr := loader.Agents.ResolveAgentState(taskCtx, meta.ID)
+		agentResults <- agentResult{state: state, err: agentErr}
+	}()
+
+	resolvedState := <-stateResults
+	resolvedAgent := <-agentResults
+	current := resolvedState.current
+	if resolvedState.err != nil {
+		current = CurrentState{
+			State:  "unknown",
+			Source: "adapter-error",
+			Detail: resolvedState.err.Error(),
+		}
+	}
+	if resolvedAgent.err != nil || resolvedAgent.state != "alive" || isTerminalState(current.State) {
+		return managedProbeResult{}
+	}
+	events, err := ReadStatusEvents(
+		filepath.Join(loader.Home.StateDir, meta.ID+".status"),
+		statusLines,
+		statusBytes,
+	)
+	if err != nil {
+		return managedProbeResult{err: err}
+	}
+	report, err := ReadReport(
+		filepath.Join(loader.Home.DataDir, meta.ID, "report.md"),
+		reportBytes,
+	)
+	if err != nil {
+		return managedProbeResult{err: err}
+	}
+	return managedProbeResult{
+		include: true,
+		task: Task{
 			Metadata:  meta,
 			Current:   current,
 			Events:    events,
 			Report:    report,
 			Ownership: FirstmateManaged,
 			Target:    meta.ID,
-		})
+		},
 	}
-	if loader.Direct != nil {
-		sessions, err := loader.Direct.Discover(ctx, metas)
-		if err != nil {
-			return nil, err
-		}
-		for _, session := range sessions {
-			tasks = append(tasks, Task{
-				Metadata: Metadata{
-					ID:       session.Target,
-					Project:  session.Project,
-					Kind:     "direct-session",
-					Mode:     "private",
-					Harness:  "codex",
-					Worktree: session.Project,
-					Window:   session.Target,
-				},
-				Current: CurrentState{
-					State:  "working",
-					Source: "tmux",
-					Detail: "live Direct Codex session",
-				},
-				Ownership: CaptainPrivate,
-				Target:    session.Target,
-			})
-		}
-	}
-	return tasks, nil
 }
 
 func (loader Loader) LoadLive(ctx context.Context, task Task) ([]string, error) {

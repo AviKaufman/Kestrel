@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -40,24 +39,66 @@ func (resolver fakeAgentStateResolver) ResolveAgentState(_ context.Context, task
 	return resolver.states[taskID], nil
 }
 
-type deadlineStateResolver struct {
-	mu        sync.Mutex
-	remaining map[string]time.Duration
+type coordinatedStateResolver struct {
+	slowStarted  chan struct{}
+	laterStarted chan struct{}
+	releaseSlow  chan struct{}
 }
 
-func (resolver *deadlineStateResolver) Resolve(ctx context.Context, taskID string) (CurrentState, error) {
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return CurrentState{}, errors.New("probe deadline is missing")
-	}
-	resolver.mu.Lock()
-	resolver.remaining[taskID] = time.Until(deadline)
-	resolver.mu.Unlock()
-	if taskID == "a-slow" {
-		<-ctx.Done()
-		return CurrentState{}, ctx.Err()
+func (resolver *coordinatedStateResolver) Resolve(ctx context.Context, taskID string) (CurrentState, error) {
+	switch taskID {
+	case "a-slow":
+		close(resolver.slowStarted)
+		select {
+		case <-resolver.releaseSlow:
+		case <-ctx.Done():
+			return CurrentState{}, ctx.Err()
+		}
+	case "b-later":
+		close(resolver.laterStarted)
 	}
 	return CurrentState{State: "working", Source: "test"}, nil
+}
+
+type coordinatedAgentResolver struct {
+	slowStarted  chan struct{}
+	laterStarted chan struct{}
+}
+
+func (resolver *coordinatedAgentResolver) ResolveAgentState(_ context.Context, taskID string) (string, error) {
+	switch taskID {
+	case "a-slow":
+		close(resolver.slowStarted)
+	case "b-later":
+		close(resolver.laterStarted)
+	}
+	return "alive", nil
+}
+
+type coordinatedDirectSource struct {
+	started chan struct{}
+}
+
+func (source *coordinatedDirectSource) Discover(context.Context, []Metadata) ([]DirectSession, error) {
+	close(source.started)
+	return []DirectSession{{Target: "private:notes.0", Project: "/projects/notes"}}, nil
+}
+
+func (source *coordinatedDirectSource) Read(context.Context, string) ([]string, error) {
+	return nil, nil
+}
+
+type waveStateResolver struct {
+	lastStarted chan struct{}
+}
+
+func (resolver *waveStateResolver) Resolve(ctx context.Context, taskID string) (CurrentState, error) {
+	if taskID == "i-later" {
+		close(resolver.lastStarted)
+		return CurrentState{State: "working", Source: "test"}, nil
+	}
+	<-ctx.Done()
+	return CurrentState{}, ctx.Err()
 }
 
 type fakeDirectSessionSource struct {
@@ -229,34 +270,113 @@ func TestLoaderShowsOnlyActiveManagedWorkersAndDirectSessions(t *testing.T) {
 	}
 }
 
-func TestLoaderGivesEachManagedProbeAFreshBudget(t *testing.T) {
+func TestLoaderStartsManagedAndDirectProbesWithoutSerialStarvation(t *testing.T) {
 	home := fixtureHome(t)
 	for _, id := range []string{"a-slow", "b-later"} {
 		writeFile(t, filepath.Join(home.StateDir, id+".meta"), "kind=ship\n")
 	}
-	states := &deadlineStateResolver{remaining: make(map[string]time.Duration)}
+	releaseSlow := make(chan struct{})
+	states := &coordinatedStateResolver{
+		slowStarted:  make(chan struct{}),
+		laterStarted: make(chan struct{}),
+		releaseSlow:  releaseSlow,
+	}
+	agents := &coordinatedAgentResolver{
+		slowStarted:  make(chan struct{}),
+		laterStarted: make(chan struct{}),
+	}
+	direct := &coordinatedDirectSource{started: make(chan struct{})}
 	loader := Loader{
 		Home:           home,
 		States:         states,
-		Agents:         fakeAgentStateResolver{states: map[string]string{"a-slow": "alive", "b-later": "alive"}},
-		ProbeTimeout:   20 * time.Millisecond,
+		Agents:         agents,
+		Direct:         direct,
+		ProbeTimeout:   time.Second,
 		StatusMaxLines: 20,
 		StatusMaxBytes: 1024,
 		ReportMaxBytes: 1024,
 	}
 
-	tasks, err := loader.Load(context.Background())
-	if err != nil {
+	type loadResult struct {
+		tasks []Task
+		err   error
+	}
+	loaded := make(chan loadResult, 1)
+	go func() {
+		tasks, err := loader.Load(context.Background())
+		loaded <- loadResult{tasks: tasks, err: err}
+	}()
+
+	var missing string
+	for label, started := range map[string]<-chan struct{}{
+		"slow state":  states.slowStarted,
+		"later state": states.laterStarted,
+		"slow agent":  agents.slowStarted,
+		"later agent": agents.laterStarted,
+		"direct":      direct.started,
+	} {
+		select {
+		case <-started:
+		case <-time.After(500 * time.Millisecond):
+			missing = label
+		}
+		if missing != "" {
+			break
+		}
+	}
+	close(releaseSlow)
+
+	result := <-loaded
+	if missing != "" {
+		t.Fatalf("%s probe did not start while the first state probe was blocked", missing)
+	}
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	got := make([]string, len(result.tasks))
+	for index, task := range result.tasks {
+		got[index] = task.Metadata.ID
+	}
+	want := []string{"a-slow", "b-later", "private:notes.0"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("Load() order = %v, want %v", got, want)
+	}
+}
+
+func TestLoaderBudgetsProbeWavesWithinTheRefreshDeadline(t *testing.T) {
+	home := fixtureHome(t)
+	agentStates := make(map[string]string)
+	for _, id := range []string{"a-slow", "b-slow", "c-slow", "d-slow", "e-slow", "f-slow", "g-slow", "h-slow", "i-later"} {
+		writeFile(t, filepath.Join(home.StateDir, id+".meta"), "kind=ship\n")
+		agentStates[id] = "alive"
+	}
+	states := &waveStateResolver{lastStarted: make(chan struct{})}
+	loader := Loader{
+		Home:           home,
+		States:         states,
+		Agents:         fakeAgentStateResolver{states: agentStates},
+		ProbeTimeout:   time.Second,
+		StatusMaxLines: 20,
+		StatusMaxBytes: 1024,
+		ReportMaxBytes: 1024,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 400*time.Millisecond)
+	defer cancel()
+	loaded := make(chan error, 1)
+	go func() {
+		_, err := loader.Load(ctx)
+		loaded <- err
+	}()
+
+	select {
+	case <-states.lastStarted:
+	case <-time.After(300 * time.Millisecond):
+		cancel()
+		<-loaded
+		t.Fatal("last probe wave did not start within the overall refresh deadline")
+	}
+	if err := <-loaded; err != nil {
 		t.Fatal(err)
-	}
-	if len(tasks) != 2 || tasks[1].Metadata.ID != "b-later" {
-		t.Fatalf("Load() tasks = %#v, want both probes to complete", tasks)
-	}
-	states.mu.Lock()
-	laterBudget := states.remaining["b-later"]
-	states.mu.Unlock()
-	if laterBudget < 10*time.Millisecond {
-		t.Fatalf("later probe budget = %s, want a fresh per-task deadline", laterBudget)
 	}
 }
 

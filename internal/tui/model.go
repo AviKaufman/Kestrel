@@ -59,11 +59,15 @@ type Model struct {
 	home            string
 	hub             HubState
 	tasks           []firstmate.Task
+	displayHome     string
+	displayHub      HubState
+	displayTasks    []firstmate.Task
 	destination     Destination
 	selected        int
 	outputMode      OutputMode
 	liveTaskID      string
 	liveLines       []string
+	displayLive     []string
 	source          Source
 	width           int
 	height          int
@@ -122,7 +126,11 @@ func NewModel(home string, hub HubState, tasks []firstmate.Task, live []string, 
 		home:         home,
 		hub:          hub,
 		tasks:        tasks,
+		displayHome:  safeScalar(home),
+		displayHub:   safeHub(hub),
+		displayTasks: safeTasks(tasks),
 		liveLines:    live,
+		displayLive:  safeMultilineLines(live),
 		source:       source,
 		width:        110,
 		height:       34,
@@ -161,6 +169,8 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			Err:        message.hubErr,
 			HistoryErr: message.hubHistoryErr,
 		}
+		model.displayTasks = safeTasks(model.tasks)
+		model.displayHub = safeHub(model.hub)
 		model.selected = indexOfTask(model.destinationTasks(), selectedID)
 		if model.selected < 0 {
 			model.selected = 0
@@ -173,12 +183,13 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		model.liveTaskID = message.taskID
 		model.liveLines = message.lines
+		model.displayLive = safeMultilineLines(message.lines)
 		model.err = message.err
 		return model, nil
 	case sendFinishedMsg:
 		model.sending = false
 		if message.err != nil {
-			model.sendStatus = "Send to " + message.label + " failed: " + message.err.Error()
+			model.sendStatus = safeScalar("Send to " + message.label + " failed: " + message.err.Error())
 			return model, nil
 		}
 		if model.composer.Value() == message.draft {
@@ -189,7 +200,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case privateCreatedMsg:
 		model.creating = false
 		if message.err != nil {
-			model.createStatus = "Create failed: " + message.err.Error()
+			model.createStatus = safeScalar("Create failed: " + message.err.Error())
 			return model, nil
 		}
 		selected := indexOfPrivateTarget(message.tasks, message.session.Target)
@@ -198,6 +209,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return model, nil
 		}
 		model.tasks = message.tasks
+		model.displayTasks = safeTasks(message.tasks)
 		model.destination = PrivateDestination
 		model.selected = selected
 		model.creatingPrivate = false
@@ -206,6 +218,7 @@ func (model Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		model.createStatus = "Created " + message.session.Target
 		model.outputMode = ReportsMode
 		model.liveLines = nil
+		model.displayLive = nil
 		model.liveTaskID = ""
 		return model, nil
 	case tea.KeyPressMsg:
