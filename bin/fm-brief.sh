@@ -259,6 +259,9 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
+# These assignments intentionally use single-quoted literal brief text; embedded
+# dollar expressions and command examples must remain literal in generated briefs.
+# shellcheck disable=SC2016
 if [ "$LAVISH_REVIEW" -eq 1 ]; then
   LAVISH_COMPLETION_GATE=""
   if [ "$KIND" = ship ]; then
@@ -293,6 +296,7 @@ LAVISH_COMPLETION_GATE=""
 LAVISH_REVIEW_SECTION=""
 fi
 
+# shellcheck disable=SC2016
 if [ "$LAVISH_REVIEW" -eq 1 ]; then
   LAVISH_DECISION_RULE='6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings), append `needs-decision: {summary of options}` and do not stop.
    Keep the active `lavish-axi poll "$LAVISH_ARTIFACT"` running while waiting for firstmate'\''s reply; if the decision came from a poll prompt or layout warning, first complete the reply-and-repoll rule above.
@@ -305,6 +309,7 @@ else
    append `needs-decision: {summary of options}` and stop. Firstmate will apply the configured authority and reply with the decision.'
 fi
 
+# shellcheck disable=SC2016
 if [ "$KIND" = scout ]; then
 if [ "$LAVISH_REVIEW" -eq 1 ]; then
   SCOUT_DOD_LINE='When the report is complete and captain feedback is complete and the final Lavish response has re-established the poll listener, append `done: {one-line conclusion}` to the status file and stop.'
@@ -364,6 +369,7 @@ read -r MODE _ <<EOF
 $("$FM_ROOT/bin/fm-project-mode.sh" "$REPO")
 EOF
 
+# shellcheck disable=SC2016
 case "$MODE" in
   direct-PR)
     SETUP2=""
