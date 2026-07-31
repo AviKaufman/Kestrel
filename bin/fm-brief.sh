@@ -29,6 +29,8 @@
 #   --lavish-review adds the opt-in lifecycle contract for a captain-facing
 #   Lavish review. Use it only when the task will create, refresh, or operate
 #   such a review; ordinary briefs stay unchanged.
+#   The flag applies only to crewmate ship or scout briefs; secondmate charters
+#   reject it.
 # For ship tasks, the definition of done is shaped by the project's delivery mode
 # (data/projects.md via fm-project-mode.sh; see the project-management skill
 # and AGENTS.md task lifecycle):
