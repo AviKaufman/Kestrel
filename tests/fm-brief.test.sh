@@ -543,6 +543,57 @@ test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
   pass "fm-brief.sh: Herdr lab contract covers scouts and rejects secondmate misuse"
 }
 
+test_lavish_review_lifecycle_is_explicit_opt_in() {
+  local home ship scout plain_ship plain_scout rejected_status=0
+  home="$TMP_ROOT/lavish-review-home"
+  mkdir -p "$home/data"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" lavish-ship firstmate --lavish-review >/dev/null 2>&1
+  ship="$home/data/lavish-ship/brief.md"
+  assert_grep "# Lavish review lifecycle - OPT IN" "$ship" \
+    "ship --lavish-review brief missing its explicit lifecycle heading"
+  assert_grep "Set \`LAVISH_ARTIFACT\` to the canonical HTML artifact path for the review and keep using that same path." "$ship" \
+    "Lavish review brief missing canonical artifact path ownership"
+  assert_grep "After every \`lavish-axi <artifact>\` open or refresh, immediately run \`lavish-axi poll \"\$LAVISH_ARTIFACT\"\` with no timeout." "$ship" \
+    "Lavish review brief missing the initial unbounded poll contract"
+  assert_grep "After handling any prompt or layout warning returned by poll, finish by running \`lavish-axi poll \"\$LAVISH_ARTIFACT\" --agent-reply \"<visible response>\"\`." "$ship" \
+    "Lavish review brief missing the reply-and-repoll contract"
+  assert_grep "Do not append \`done:\` merely because the page, report, or PR is open." "$ship" \
+    "Lavish review brief missing nonterminal open-review protection"
+  assert_grep "Use \`paused:\` for a Lavish review wait only while a \`lavish-axi poll\` listener is active or while you are restarting that listener." "$ship" \
+    "Lavish review brief missing status vocabulary boundary"
+  assert_grep "If interrupted, resume with the same \`LAVISH_ARTIFACT\` path and run \`lavish-axi poll \"\$LAVISH_ARTIFACT\"\` again." "$ship" \
+    "Lavish review brief missing interrupted-worker recovery"
+  assert_grep "If the Lavish server or browser was restored, run \`lavish-axi \"\$LAVISH_ARTIFACT\"\` only to open or resume that same artifact, then immediately return to \`lavish-axi poll \"\$LAVISH_ARTIFACT\"\`." "$ship" \
+    "Lavish review brief missing restored-server recovery"
+  assert_grep "Do not open a second artifact path, end unrelated sessions, run \`lavish-axi stop\`, or disturb unrelated Lavish reviews." "$ship" \
+    "Lavish review brief missing unrelated-session safety"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" lavish-scout firstmate --scout --lavish-review >/dev/null 2>&1
+  scout="$home/data/lavish-scout/brief.md"
+  assert_grep "# Lavish review lifecycle - OPT IN" "$scout" \
+    "scout --lavish-review brief missing its lifecycle section"
+  assert_grep "Before reporting done, read and follow" "$scout" \
+    "Lavish scout brief lost the decision-hold completion gate"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" ordinary-ship firstmate >/dev/null 2>&1
+  plain_ship="$home/data/ordinary-ship/brief.md"
+  assert_no_grep "# Lavish review lifecycle - OPT IN" "$plain_ship" \
+    "ordinary ship brief gained Lavish review lifecycle text without opt-in"
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" ordinary-scout firstmate --scout >/dev/null 2>&1
+  plain_scout="$home/data/ordinary-scout/brief.md"
+  assert_no_grep "# Lavish review lifecycle - OPT IN" "$plain_scout" \
+    "ordinary scout brief gained Lavish review lifecycle text without opt-in"
+
+  FM_HOME="$home" FM_SECONDMATE_CHARTER=ops \
+    "$ROOT/bin/fm-brief.sh" lavish-secondmate --secondmate --no-projects --lavish-review >/dev/null 2>&1 || rejected_status=$?
+  expect_code 1 "$rejected_status" "secondmate --lavish-review must be rejected"
+  assert_absent "$home/data/lavish-secondmate/brief.md" \
+    "rejected secondmate --lavish-review still wrote a brief"
+
+  pass "fm-brief.sh: Lavish review lifecycle is explicit opt-in for ship and scout briefs"
+}
+
 test_pause_verb_override_renders_all_brief_scaffolds() {
   local home kind id brief
   home="$TMP_ROOT/pause-verb-home"
@@ -629,6 +680,7 @@ test_herdr_lab_contract_is_explicit_and_complete
 test_herdr_lab_contract_quotes_foreign_firstmate_path
 test_herdr_lab_omission_is_loud_for_ship_and_scout
 test_herdr_lab_contract_applies_to_scouts_but_not_secondmates
+test_lavish_review_lifecycle_is_explicit_opt_in
 test_secondmate_no_projects_charter
 test_secondmate_marked_request_reporting_contract
 test_secondmate_directory_paths_are_absolute_and_output_is_stable

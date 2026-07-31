@@ -6,7 +6,7 @@
 # description, acceptance criteria, and context, and may adjust other sections
 # when the task genuinely deviates (e.g. working an existing external PR instead
 # of shipping a new one).
-# Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab]
+# Usage: fm-brief.sh <task-id> <repo-name> [--scout] [--herdr-lab] [--lavish-review]
 #        fm-brief.sh <task-id> --secondmate {<project>...|--no-projects}
 #   --scout writes the scout contract instead: the deliverable is a report at
 #   data/<task-id>/report.md (no branch, no push, no PR) and the worktree is scratch.
@@ -26,6 +26,9 @@
 #   The flag must be explicit because {TASK} is filled after scaffolding and the
 #   caller-supplied repo string cannot reliably identify this repo. Briefs made
 #   without it carry a loud declaration so an omitted contract cannot be silent.
+#   --lavish-review adds the opt-in lifecycle contract for a captain-facing
+#   Lavish review. Use it only when the task will create, refresh, or operate
+#   such a review; ordinary briefs stay unchanged.
 # For ship tasks, the definition of done is shaped by the project's delivery mode
 # (data/projects.md via fm-project-mode.sh; see the project-management skill
 # and AGENTS.md task lifecycle):
@@ -93,6 +96,7 @@ else
 fi
 KIND=ship
 HERDR_LAB=0
+LAVISH_REVIEW=0
 NO_PROJECTS=0
 POS=()
 for a in "$@"; do
@@ -100,6 +104,7 @@ for a in "$@"; do
     --scout) KIND=scout ;;
     --secondmate) KIND=secondmate ;;
     --herdr-lab) HERDR_LAB=1 ;;
+    --lavish-review) LAVISH_REVIEW=1 ;;
     --no-projects) NO_PROJECTS=1 ;;
     *) POS+=("$a") ;;
   esac
@@ -108,6 +113,11 @@ ID=${POS[0]}
 
 if [ "$KIND" = secondmate ] && [ "$HERDR_LAB" -eq 1 ]; then
   echo "error: --herdr-lab applies only to crewmate ship or scout briefs" >&2
+  exit 1
+fi
+
+if [ "$KIND" = secondmate ] && [ "$LAVISH_REVIEW" -eq 1 ]; then
+  echo "error: --lavish-review applies only to crewmate ship or scout briefs" >&2
   exit 1
 fi
 
@@ -247,6 +257,34 @@ EOF
 HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
+if [ "$LAVISH_REVIEW" -eq 1 ]; then
+IFS= read -r -d '' LAVISH_REVIEW_SECTION <<EOF || true
+# Lavish review lifecycle - OPT IN
+This task creates, refreshes, or operates a captain-facing Lavish review, so the review stays nonterminal while captain feedback is expected.
+Set \`LAVISH_ARTIFACT\` to the canonical HTML artifact path for the review and keep using that same path.
+After every \`lavish-axi <artifact>\` open or refresh, immediately run \`lavish-axi poll "\$LAVISH_ARTIFACT"\` with no timeout.
+Leave that poll running; if the harness cannot keep a foreground command alive, run the same normal poll in the background and wait for it.
+If the poll process exits because it was killed or timed out, re-run \`lavish-axi poll "\$LAVISH_ARTIFACT"\`; queued feedback is persistent and the listener must be re-established.
+When a poll returns prompts or layout warnings, handle every returned item.
+Fix layout warnings before involving the captain.
+After handling any prompt or layout warning returned by poll, finish by running \`lavish-axi poll "\$LAVISH_ARTIFACT" --agent-reply "<visible response>"\`.
+The visible response must state what changed, what was answered, or why nothing changed, and that command becomes the next active feedback wait.
+Do not append \`done:\` merely because the page, report, or PR is open.
+Use \`$PAUSED_VERB:\` for a Lavish review wait only while a \`lavish-axi poll\` listener is active or while you are restarting that listener.
+Use \`blocked:\` if the listener cannot be restarted after the same obstacle repeats twice.
+
+## Lavish recovery
+If interrupted, resume with the same \`LAVISH_ARTIFACT\` path and run \`lavish-axi poll "\$LAVISH_ARTIFACT"\` again.
+Do not reopen a healthy already-open review merely to restore the agent listener.
+If the Lavish server or browser was restored, run \`lavish-axi "\$LAVISH_ARTIFACT"\` only to open or resume that same artifact, then immediately return to \`lavish-axi poll "\$LAVISH_ARTIFACT"\`.
+Do not open a second artifact path, end unrelated sessions, run \`lavish-axi stop\`, or disturb unrelated Lavish reviews.
+EOF
+LAVISH_REVIEW_SECTION=${LAVISH_REVIEW_SECTION%$'\n'}
+LAVISH_REVIEW_SECTION=$'\n'"$LAVISH_REVIEW_SECTION"
+else
+LAVISH_REVIEW_SECTION=""
+fi
+
 if [ "$KIND" = scout ]; then
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
@@ -254,7 +292,7 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 # Task
 {TASK}
 
-$HERDR_SECTION
+$HERDR_SECTION$LAVISH_REVIEW_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
@@ -362,7 +400,7 @@ You are a crewmate: an autonomous worker agent managed by firstmate. Work on you
 # Task
 {TASK}
 
-$HERDR_SECTION
+$HERDR_SECTION$LAVISH_REVIEW_SECTION
 
 # Setup
 You are in a disposable git worktree of $REPO, at a detached HEAD on a clean default branch.
