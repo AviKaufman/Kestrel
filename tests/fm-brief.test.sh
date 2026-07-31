@@ -544,9 +544,10 @@ test_herdr_lab_contract_applies_to_scouts_but_not_secondmates() {
 }
 
 test_lavish_review_lifecycle_is_explicit_opt_in() {
-  local home ship scout plain_ship plain_scout rejected_status=0
+  local home ship scout direct local_only plain_ship plain_scout rejected_status=0
   home="$TMP_ROOT/lavish-review-home"
   mkdir -p "$home/data"
+  write_registry "$home"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" lavish-ship firstmate --lavish-review >/dev/null 2>&1
   ship="$home/data/lavish-ship/brief.md"
@@ -568,6 +569,28 @@ test_lavish_review_lifecycle_is_explicit_opt_in() {
     "Lavish review brief missing restored-server recovery"
   assert_grep "Do not open a second artifact path, end unrelated sessions, run \`lavish-axi stop\`, or disturb unrelated Lavish reviews." "$ship" \
     "Lavish review brief missing unrelated-session safety"
+  assert_grep "Before reporting any terminal \`done:\` or ready state, read and follow \`$ROOT/.agents/skills/decision-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the ship and this Lavish review." "$ship" \
+    "Lavish ship brief missing the decision-hold completion gate"
+  assert_grep "append \`needs-decision: {summary of options}\` and do not stop." "$ship" \
+    "Lavish ship brief still makes a captain decision terminal"
+  assert_grep "Keep the active \`lavish-axi poll \"\$LAVISH_ARTIFACT\"\` running while waiting for firstmate's reply" "$ship" \
+    "Lavish ship brief does not keep its listener active while waiting on a decision"
+  assert_grep "After /no-mistakes reports CI green, keep the Lavish poll listener active until captain feedback is complete" "$ship" \
+    "Lavish no-mistakes brief still makes CI completion terminal"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" lavish-direct direct-proj --lavish-review >/dev/null 2>&1
+  direct="$home/data/lavish-direct/brief.md"
+  assert_grep "When it is implemented and committed, push your branch and open a PR with \`gh-axi\`. Keep the Lavish poll listener active while captain feedback is expected." "$direct" \
+    "Lavish direct-PR brief lost the push/open-PR action or active listener"
+  assert_grep "When captain feedback is complete and the final Lavish response has re-established the poll listener, append \`done: PR {url}\` to the status file and stop." "$direct" \
+    "Lavish direct-PR brief still treats opening the PR as terminal"
+
+  FM_HOME="$home" "$ROOT/bin/fm-brief.sh" lavish-local local-proj --lavish-review >/dev/null 2>&1
+  local_only="$home/data/lavish-local/brief.md"
+  assert_grep "When it is implemented and committed, keep the Lavish poll listener active while captain feedback is expected." "$local_only" \
+    "Lavish local-only brief lost its implementation completion condition"
+  assert_grep "When captain feedback is complete and the final Lavish response has re-established the poll listener, append \`done: ready in branch fm/lavish-local\` to the status file and stop." "$local_only" \
+    "Lavish local-only brief still treats implementation as terminal"
 
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" lavish-scout firstmate --scout --lavish-review >/dev/null 2>&1
   scout="$home/data/lavish-scout/brief.md"
@@ -580,6 +603,8 @@ test_lavish_review_lifecycle_is_explicit_opt_in() {
   plain_ship="$home/data/ordinary-ship/brief.md"
   assert_no_grep "# Lavish review lifecycle - OPT IN" "$plain_ship" \
     "ordinary ship brief gained Lavish review lifecycle text without opt-in"
+  assert_no_grep "captain feedback is complete" "$plain_ship" \
+    "ordinary ship brief gained Lavish terminal wording without opt-in"
   FM_HOME="$home" "$ROOT/bin/fm-brief.sh" ordinary-scout firstmate --scout >/dev/null 2>&1
   plain_scout="$home/data/ordinary-scout/brief.md"
   assert_no_grep "# Lavish review lifecycle - OPT IN" "$plain_scout" \

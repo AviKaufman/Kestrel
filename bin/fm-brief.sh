@@ -258,6 +258,10 @@ HERDR_SECTION=${HERDR_SECTION%$'\n'}
 fi
 
 if [ "$LAVISH_REVIEW" -eq 1 ]; then
+  LAVISH_COMPLETION_GATE=""
+  if [ "$KIND" = ship ]; then
+    LAVISH_COMPLETION_GATE='Before reporting any terminal `done:` or ready state, read and follow `'"$FM_ROOT"'/.agents/skills/decision-hold-lifecycle/SKILL.md` and pass its shared completion gate for the ship and this Lavish review.'
+  fi
 IFS= read -r -d '' LAVISH_REVIEW_SECTION <<EOF || true
 # Lavish review lifecycle - OPT IN
 This task creates, refreshes, or operates a captain-facing Lavish review, so the review stays nonterminal while captain feedback is expected.
@@ -278,14 +282,33 @@ If interrupted, resume with the same \`LAVISH_ARTIFACT\` path and run \`lavish-a
 Do not reopen a healthy already-open review merely to restore the agent listener.
 If the Lavish server or browser was restored, run \`lavish-axi "\$LAVISH_ARTIFACT"\` only to open or resume that same artifact, then immediately return to \`lavish-axi poll "\$LAVISH_ARTIFACT"\`.
 Do not open a second artifact path, end unrelated sessions, run \`lavish-axi stop\`, or disturb unrelated Lavish reviews.
+$LAVISH_COMPLETION_GATE
 EOF
 LAVISH_REVIEW_SECTION=${LAVISH_REVIEW_SECTION%$'\n'}
 LAVISH_REVIEW_SECTION=$'\n'"$LAVISH_REVIEW_SECTION"
 else
+LAVISH_COMPLETION_GATE=""
 LAVISH_REVIEW_SECTION=""
 fi
 
+if [ "$LAVISH_REVIEW" -eq 1 ]; then
+  LAVISH_DECISION_RULE='6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings), append `needs-decision: {summary of options}` and do not stop.
+   Keep the active `lavish-axi poll "$LAVISH_ARTIFACT"` running while waiting for firstmate'\''s reply; if the decision came from a poll prompt or layout warning, first complete the reply-and-repoll rule above.
+   When firstmate replies, append `resolved: {how it was decided or unblocked}` (add the same `[key=<slug>]` if you opened it with one) and continue.'
+elif [ "$KIND" = scout ]; then
+  LAVISH_DECISION_RULE='6. If a decision belongs to a human (product choices, destructive actions),
+   append `needs-decision: {summary of options}` and stop. Firstmate will reply with the decision.'
+else
+  LAVISH_DECISION_RULE='6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
+   append `needs-decision: {summary of options}` and stop. Firstmate will apply the configured authority and reply with the decision.'
+fi
+
 if [ "$KIND" = scout ]; then
+if [ "$LAVISH_REVIEW" -eq 1 ]; then
+  SCOUT_DOD_LINE='When the report is complete and captain feedback is complete and the final Lavish response has re-established the poll listener, append `done: {one-line conclusion}` to the status file and stop.'
+else
+  SCOUT_DOD_LINE='When the report is complete, append `done: {one-line conclusion}` to the status file and stop.'
+fi
 cat > "$BRIEF" <<EOF
 You are a crewmate: an autonomous worker agent managed by firstmate. Work on your own; do not wait for a human.
 
@@ -315,8 +338,7 @@ The report is the only thing that survives, so anything worth keeping must be in
    firstmate then leaves your idle pane alone and rechecks it on a long cadence instead of
    treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
-6. If a decision belongs to a human (product choices, destructive actions),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will reply with the decision.
+$LAVISH_DECISION_RULE
    When firstmate replies or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (add the same \`[key=<slug>]\` if you opened it with one) so the decision or blocker is durably closed and does not keep resurfacing.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
@@ -326,7 +348,7 @@ The report is the only thing that survives, so anything worth keeping must be in
 Write your findings to \`$DATA/$ID/report.md\`.
 The report must stand alone: what you did, what you found, the evidence (commands run, output, file:line references), and what you recommend.
 Before reporting done, read and follow \`$FM_ROOT/.agents/skills/decision-hold-lifecycle/SKILL.md\` and pass its shared completion gate for the report and any visual review.
-When the report is complete, append \`done: {one-line conclusion}\` to the status file and stop.
+$SCOUT_DOD_LINE
 If your findings reveal work that should ship (e.g. you reproduced a bug and the fix is clear), say so in the report; firstmate may promote this task in place, and you would then receive mode-specific ship instructions as a follow-up message.
 EOF
 echo "scaffolded: $BRIEF (scout; replace {TASK})"
@@ -343,24 +365,34 @@ EOF
 case "$MODE" in
   direct-PR)
     SETUP2=""
+    if [ "$LAVISH_REVIEW" -eq 1 ]; then
+      SHIP_DOD_LINE='When it is implemented and committed, push your branch and open a PR with `gh-axi`. Keep the Lavish poll listener active while captain feedback is expected. When captain feedback is complete and the final Lavish response has re-established the poll listener, append `done: PR {url}` to the status file and stop.'
+    else
+      SHIP_DOD_LINE='When it is implemented and committed, push your branch and open a PR with `gh-axi`, then append `done: PR {url}` to the status file and stop.'
+    fi
     RULE1='1. Never push to the default branch (push only your `fm/'"$ID"'` branch). Never merge a PR.'
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 This project ships **direct-PR**: you raise the PR yourself, without the no-mistakes pipeline.
 The task is complete only when committed on your branch.
-When it is implemented and committed, push your branch and open a PR with \`gh-axi\`, then append \`done: PR {url}\` to the status file and stop.
+$SHIP_DOD_LINE
 Do NOT run /no-mistakes. The configured merge authority decides whether to merge the PR; firstmate relays the outcome.
 EOF
     ;;
   local-only)
     SETUP2=""
+    if [ "$LAVISH_REVIEW" -eq 1 ]; then
+      SHIP_DOD_LINE='When it is implemented and committed, keep the Lavish poll listener active while captain feedback is expected. When captain feedback is complete and the final Lavish response has re-established the poll listener, append `done: ready in branch fm/'"$ID"'` to the status file and stop.'
+    else
+      SHIP_DOD_LINE='When it is implemented and committed, append `done: ready in branch fm/'"$ID"'` to the status file and stop.'
+    fi
     RULE1="1. Never push to any remote and never open a PR. Work only on your \`fm/$ID\` branch; firstmate handles the merge into local \`main\`."
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 This project ships **local-only**: no remote, no PR, no pipeline.
 The task is complete only when committed on your branch \`fm/$ID\`. Do NOT push, do NOT open a PR, do NOT merge.
 Keep your branch a clean fast-forward onto the current default branch - if \`main\` has advanced, rebase onto it so the eventual merge stays a fast-forward.
-When it is implemented and committed, append \`done: ready in branch fm/$ID\` to the status file and stop.
+$SHIP_DOD_LINE
 The configured merge authority approves the ready branch, then firstmate merges it into local \`main\` through the guarded fast-forward path.
 EOF
     ;;
@@ -368,10 +400,19 @@ EOF
     SETUP2="
 2. Run \`no-mistakes doctor\`; if it reports the repo is not initialized here, run \`no-mistakes init\`."
     RULE1='1. Never push to the default branch. Never merge a PR.'
+    if [ "$LAVISH_REVIEW" -eq 1 ]; then
+      SHIP_DOD_LINE='When you believe the implementation is complete, keep the Lavish poll listener active while captain feedback is expected. When captain feedback is complete and the final Lavish response has re-established the poll listener, append `done: {summary}` to the status file and stop.'
+      NO_MISTAKES_DECISION_LINE='- ask-user findings are never yours to answer: escalate to firstmate (rule 6), keep the Lavish poll listener active, and do not stop.'
+      NO_MISTAKES_CI_LINE='After /no-mistakes reports CI green, keep the Lavish poll listener active until captain feedback is complete and the final Lavish response has re-established the poll listener, then append `done: PR {url} checks green` and stop. You are finished.'
+    else
+      SHIP_DOD_LINE='When you believe it is complete, append `done: {summary}` to the status file and stop.'
+      NO_MISTAKES_DECISION_LINE='- ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.'
+      NO_MISTAKES_CI_LINE='After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append `done: PR {url} checks green` and stop. You are finished.'
+    fi
     IFS= read -r -d '' DOD <<EOF || true
 # Definition of done
 The task is complete only when committed on your branch.
-When you believe it is complete, append \`done: {summary}\` to the status file and stop.
+$SHIP_DOD_LINE
 Firstmate will then instruct you to run /no-mistakes to validate and ship a PR.
 
 You drive no-mistakes by responding to its gates, not by implementing fixes.
@@ -379,12 +420,12 @@ Follow the guidance no-mistakes itself provides for the mechanics: it loads when
 Do not hand-edit, commit, or fix findings yourself while a run is active - the pipeline applies every fix.
 
 Two firstmate-specific rules layer on top of that guidance:
-- ask-user findings are never yours to answer: escalate to firstmate (rule 6) and stop.
+$NO_MISTAKES_DECISION_LINE
   Firstmate applies the authority contract in its \`AGENTS.md\` and obtains any required captain decision.
   When the decision comes back, feed it to the gate with \`no-mistakes axi respond\` and let the pipeline apply it - do not route the question to "the user" or implement the fix yourself.
 - Avoid \`--yes\`: it would silently bypass firstmate's authority check and any required captain escalation.
 
-After /no-mistakes reports CI green (the CI-ready return point - do not wait for it to keep monitoring in the background until merge), append \`done: PR {url} checks green\` and stop. You are finished.
+$NO_MISTAKES_CI_LINE
 EOF
     ;;
 esac
@@ -429,8 +470,7 @@ $RULE1
    a scheduled window): firstmate then leaves your idle pane alone and rechecks it on a long
    cadence instead of treating it as a possible wedge. Use \`blocked:\` when you are stuck and need help.
 5. If you hit the same obstacle twice, append \`blocked: {why}\` and stop; firstmate will help.
-6. If a decision belongs above the implementation worker (product choices, destructive actions, ask-user findings),
-   append \`needs-decision: {summary of options}\` and stop. Firstmate will apply the configured authority and reply with the decision.
+$LAVISH_DECISION_RULE
    When firstmate replies or a blocker clears and you resume, append \`resolved: {how it was decided or unblocked}\` (add the same \`[key=<slug>]\` if you opened it with one) so the decision or blocker is durably closed and does not keep resurfacing.
 7. Never stop, restart, or update the shared \`no-mistakes\` daemon - it is one instance serving
    every lane/home, so restarting it kills other lanes' in-flight pipeline runs. On ANY no-mistakes
